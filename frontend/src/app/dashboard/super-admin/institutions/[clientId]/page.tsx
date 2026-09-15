@@ -4,7 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import type { ClientRecord, SetupSummary } from "@/types";
+import type { ClientRecord, SetupSummary, MenuGraphNode } from "@/types";
+import { MenuGraphBuilder } from "@/components/MenuGraphBuilder";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -305,6 +306,31 @@ export default function InstitutionConfigPage() {
 
       {/* General settings */}
       {client && <GeneralSection clientId={clientId} initial={client} />}
+
+      {/* ⚡ Visual Menu & Channel Builder (Graph State Machine) */}
+      {client && (
+        <MenuGraphBuilder
+          clientId={clientId}
+          nodes={client.settings?.menu_graph_nodes || []}
+          rootNodeId={client.settings?.menu_graph_root_node_id || "MENU_ROOT"}
+          onChange={(updatedNodes, updatedRootId) => {
+            setClient((prev) => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                settings: {
+                  ...prev.settings,
+                  menu_graph_nodes: updatedNodes,
+                  menu_graph_root_node_id: updatedRootId,
+                },
+              };
+            });
+          }}
+          onSaved={() => {
+            load();
+          }}
+        />
+      )}
 
       {/* Active setups */}
       <div>
