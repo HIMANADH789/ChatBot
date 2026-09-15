@@ -158,7 +158,7 @@ async def get_client(client_id: str):
     db = get_db()
     client = await db[CLIENTS].find_one(
         {"client_id": client_id},
-        {"_id": 0, "settings.welcome_message": 1, "settings.theme_color": 1, "settings.menu_options": 1, "settings.menu_tree": 1, "settings.chatbot_title": 1, "name": 1},
+        {"_id": 0, "settings.welcome_message": 1, "settings.theme_color": 1, "settings.menu_options": 1, "settings.menu_tree": 1, "settings.menu_graph_nodes": 1, "settings.menu_graph_root_node_id": 1, "settings.chatbot_title": 1, "name": 1},
     )
     if not client:
         raise HTTPException(404, "Client not found")
@@ -173,7 +173,8 @@ async def update_client_settings(client_id: str, settings: dict, user: dict = De
         raise HTTPException(403, "Only super admins or the institution's admin can edit settings")
     allowed = {
         "welcome_message", "system_prompt", "theme_color", "max_history_turns",
-        "menu_options", "menu_tree", "context_images", "descriptive_rules", "chatbot_title",
+        "menu_options", "menu_tree", "menu_graph_nodes", "menu_graph_root_node_id",
+        "context_images", "descriptive_rules", "chatbot_title",
         "context_mode", "context_instructions", "context_capacity",
     }
     if user.get("role") == "super_admin":
@@ -184,7 +185,11 @@ async def update_client_settings(client_id: str, settings: dict, user: dict = De
     # Also sync shared settings to existing channel setups so interfaces are never out of sync
     client_doc = await db[CLIENTS].find_one({"client_id": client_id})
     existing_setups = (client_doc or {}).get("settings", {}).get("setups", {})
-    shared_sync_keys = {"context_mode", "context_instructions", "context_capacity", "menu_tree", "context_images", "descriptive_rules"}
+    shared_sync_keys = {
+        "context_mode", "context_instructions", "context_capacity",
+        "menu_tree", "menu_graph_nodes", "menu_graph_root_node_id",
+        "context_images", "descriptive_rules",
+    }
     for ch_name in existing_setups.keys():
         for k in shared_sync_keys:
             if k in settings:
@@ -202,6 +207,85 @@ async def update_client_settings(client_id: str, settings: dict, user: dict = De
             pass
 
     return {"message": "Settings updated"}
+
+
+@router.post("/{client_id}/validate-menu-graph")
+async def validate_menu_graph_endpoint(
+    client_id: str,
+    payload: dict,
+    user: dict = Depends(get_current_user),
+):
+    """Validate a menu graph configuration without saving."""
+    if user.get("role") != "super_admin" and user.get("client_id") != client_id:
+        raise HTTPException(403, "Access denied")
+
+    from app.core.menu_graph import MenuGraph
+    nodes = payload.get("nodes", [])
+    root_node_id = payload.get("root_node_id", "")
+    res = MenuGraph.validate_config(nodes, root_node_id=root_node_id)
+    return res
+
+
+@router.post("/{client_id}/publish-menu-graph")
+async def publish_menu_graph_endpoint(
+    client_id: str,
+    payload: dict,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Validate, save, and pre-compile the dynamic menu graph across all setups.
+    """
+    if user.get("role") != "super_admin" and user.get("client_id") != client_id:
+        raise HTTPException(403, "Access denied")
+
+    db = get_db()
+    from app.core.menu_graph import MenuGraph
+    from app.services.profile_compiler import invalidate_client_profile, compile_client_profile
+
+    nodes = payload.get("nodes", [])
+    root_node_id = payload.get("root_node_id", "MENU_ROOT")
+
+    # Validate before saving
+    validation = MenuGraph.validate_config(nodes, root_node_id=root_node_id)
+    if not validation["valid"]:
+        raise HTTPException(400, detail={"message": "Graph validation failed", "errors": validation["errors"], "warnings": validation["warnings"]})
+
+    update_fields = {
+        "settings.menu_graph_nodes": nodes,
+        "settings.menu_graph_root_node_id": root_node_id,
+        "updated_at": datetime.now(timezone.utc),
+    }
+
+    # Sync to existing setups
+    client_doc = await db[CLIENTS].find_one({"client_id": client_id})
+    if not client_doc:
+        raise HTTPException(404, "Institution not found")
+
+    existing_setups = (client_doc or {}).get("settings", {}).get("setups", {})
+    for ch_name in existing_setups.keys():
+        update_fields[f"settings.setups.{ch_name}.menu_graph_nodes"] = nodes
+        update_fields[f"settings.setups.{ch_name}.menu_graph_root_node_id"] = root_node_id
+
+    await db[CLIENTS].update_one({"client_id": client_id}, {"$set": update_fields})
+
+    # Invalidate cached profile and compile across setups
+    invalidate_client_profile(client_id)
+    compiled_results = {}
+    for ch in ALL_SETUPS:
+        try:
+            p = await compile_client_profile(client_id, ch)
+            compiled_results[ch] = {
+                "version_hash": p.get("version_hash"),
+                "compiled_at": p.get("compiled_at"),
+            }
+        except Exception as e:
+            compiled_results[ch] = {"error": str(e)}
+
+    return {
+        "message": "Menu graph published and pre-compiled successfully",
+        "validation": validation,
+        "compiled_setups": compiled_results,
+    }
 
 @router.get("/{client_id}/widget.js")
 async def get_widget_script(client_id: str):

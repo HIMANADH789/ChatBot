@@ -51,16 +51,18 @@ async def handle_incoming(
     adapter: ChannelAdapter,
 ) -> str:
     """
-    Process one normalized message end-to-end:
-      1. Run RAG pipeline
-      2. Send reply via the appropriate channel adapter
-      3. Log complete end-to-end metadata and JSON payloads for monitoring
-      4. Return the response text
+    Process one normalized message end-to-end via the Hybrid State-Machine & RAG Core:
+      1. Normalize NormalizedMessage into standardized UserEvent
+      2. Run HybridEngine (Deterministic State Engine or Hybrid RAG)
+      3. Send reply & media via the appropriate channel adapter
+      4. Log complete end-to-end metadata and JSON payloads for monitoring
+      5. Return the response text
     """
     import time
     import traceback
     from datetime import datetime, timezone
-    from app.services import rag_service
+    from app.core.user_event import UserEvent, EventType, ActionType
+    from app.core.hybrid_engine import hybrid_engine
     db = get_db()
 
     start_time = time.time()
@@ -72,61 +74,78 @@ async def handle_incoming(
 
     try:
         from app.models.client import get_setup
-        from app.services.context_media_service import (
-            normalize_menu_tree, find_node_in_tree, is_leaf_node
-        )
-        from app.services.chat_service import get_or_create_session, add_message
 
         # Fetch client settings and setup
         client = await db[CLIENTS].find_one({"client_id": msg.client_id})
         cs = (client or {}).get("settings", {})
         setup_cfg = get_setup(cs, msg.channel)
         config = await get_client_platform_config(msg.client_id, msg.channel)
-        # Merge setup_cfg credentials if config is empty
         if not config or not config.get("access_token"):
             config = setup_cfg
 
-        menu_tree = normalize_menu_tree(cs, setup_cfg)
         interactive_id = msg.metadata.get("interactive_id", "")
-        matched_node = find_node_in_tree(menu_tree, interactive_id) if interactive_id else None
-        if not matched_node and msg.message:
-            matched_node = find_node_in_tree(menu_tree, msg.message)
+        event_type = EventType.BUTTON_CLICK if interactive_id else EventType.TEXT
 
-        # 1. If user clicked an intermediate menu node (has children), render the sub-menu!
-        if matched_node and not is_leaf_node(matched_node) and hasattr(adapter, "send_interactive_menu"):
-            children = matched_node.get("children", [])
-            body_text = f"You selected: *{matched_node.get('label')}*\nPlease select an option below:"
-            res = await adapter.send_interactive_menu(
-                msg,
-                body_text=body_text,
-                options=children,
-                config=config,
-                header_text=matched_node.get("label"),
-            )
-            response_text = f"[Interactive Menu: {matched_node.get('label')}]"
-            send_info = res if isinstance(res, dict) else {}
-            status = send_info.get("status", "menu_sent")
-        else:
-            # 2. Leaf node or regular text query -> run RAG pipeline
-            actual_query = msg.message
-            if matched_node and is_leaf_node(matched_node) and matched_node.get("action_question"):
-                actual_query = matched_node["action_question"]
-                logger.info("Leaf menu option '%s' routed to RAG question: '%s'", matched_node.get('label'), actual_query)
+        user_event = UserEvent(
+            tenant_id=msg.client_id,
+            channel=msg.channel,
+            user_id=msg.user_id,
+            session_id=msg.session_id,
+            payload=msg.message,
+            event_type=event_type,
+            metadata=msg.metadata,
+        )
 
-            llm, embeddings, vectordb = await _build_providers()
+        llm, embeddings, vectordb = await _build_providers()
+        engine_res = await hybrid_engine.process_event(
+            event=user_event,
+            llm=llm,
+            embeddings=embeddings,
+            vectordb=vectordb,
+        )
 
-            result = await rag_service.query(
-                client_id=msg.client_id,
-                message=actual_query,
-                session_id=msg.session_id,
-                llm=llm,
-                embeddings=embeddings,
-                vectordb=vectordb,
-                channel=msg.channel,
-            )
-            response_text = result.get("response", "Sorry, I could not process your request.")
+        response_text = engine_res.text
 
-            # Send main text reply
+        # Dispatch each BotAction in order (channel renderer has already
+        # formatted them into the correct channel-specific payloads)
+        text_sent = False
+        for action in engine_res.actions:
+            try:
+                if action.action_type == ActionType.IMAGE_MEDIA and hasattr(adapter, "send_image_message"):
+                    img_url = action.payload.get("image_url") or action.payload.get("image_path", "")
+                    caption = action.payload.get("caption") or action.payload.get("title", "")
+                    if img_url:
+                        await adapter.send_image_message(msg, img_url, caption, config)
+
+                elif action.action_type == ActionType.INTERACTIVE_MENU and hasattr(adapter, "send_interactive_menu"):
+                    menu_opts = action.payload.get("options", [])
+                    body_text = action.payload.get("body_text", "Please select an option:")
+                    header_text = action.payload.get("header_text", "")
+                    res = await adapter.send_interactive_menu(
+                        msg,
+                        body_text=body_text,
+                        options=menu_opts,
+                        config=config,
+                        header_text=header_text,
+                    )
+                    send_info = res if isinstance(res, dict) else {}
+                    status = send_info.get("status", "menu_sent")
+
+                elif action.action_type == ActionType.TEXT and not text_sent:
+                    text_content = action.payload.get("text", response_text)
+                    if text_content:
+                        res = await adapter.send_response(msg, text_content, config)
+                        if isinstance(res, dict):
+                            send_info = res
+                            status = res.get("status", "response_sent")
+                        else:
+                            status = "response_sent"
+                        text_sent = True
+            except Exception as action_exc:
+                logger.warning("Failed to dispatch action %s: %s", action.action_type, action_exc)
+
+        # Fallback: if no text action was dispatched and this isn't a pure menu response, send text
+        if not text_sent and not engine_res.is_deterministic:
             res = await adapter.send_response(msg, response_text, config)
             if isinstance(res, dict):
                 send_info = res
@@ -134,42 +153,12 @@ async def handle_incoming(
             else:
                 status = "response_sent"
 
-            # 3. Contextual Images Dispatch
-            matched_images = result.get("context_images", [])
-            if matched_images and hasattr(adapter, "send_image_message"):
-                for img in matched_images:
-                    img_path = img.get("image_path", "")
-                    caption = img.get("caption") or img.get("title")
-                    await adapter.send_image_message(msg, img_path, caption, config)
-
-            # 4. Contextual Interactive Menu Dispatch (if triggered by descriptor tag)
-            matched_menu = result.get("interactive_menu")
-            if matched_menu and hasattr(adapter, "send_interactive_menu"):
-                sub_opts = matched_menu.get("children", [])
-                if sub_opts:
-                    menu_body = f"Here are some options regarding *{matched_menu.get('label')}*:"
-                    await adapter.send_interactive_menu(
-                        msg,
-                        body_text=menu_body,
-                        options=sub_opts,
-                        config=config,
-                        header_text=matched_menu.get("label"),
-                    )
-
     except Exception as exc:
         tb_str = traceback.format_exc()
         error_msg = str(exc)
         status = "error"
-        logger.exception("Unified message handler failed for %s / %s: %s", msg.client_id, msg.channel, exc)
-        if matched_node and matched_node.get("label"):
-            node_lbl = matched_node.get("label")
-            response_text = (
-                f"Thank you for inquiring about our *{node_lbl}* program! "
-                f"We offer comprehensive coaching covering syllabus preparation, experienced faculty guidance, and regular mock exams. "
-                f"Our front desk will be delighted to provide full batch timings and details shortly. Please feel free to ask any further questions!"
-            )
-        else:
-            response_text = "Sorry, I'm having trouble right now. Please try again in a moment."
+        logger.exception("Unified hybrid message handler failed for %s / %s: %s", msg.client_id, msg.channel, exc)
+        response_text = "Sorry, I'm having trouble right now. Please try again in a moment."
         try:
             config = await get_client_platform_config(msg.client_id, msg.channel)
             await adapter.send_response(msg, response_text, config)

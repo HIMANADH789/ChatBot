@@ -11,6 +11,7 @@ from app.providers.base import EmbeddingProvider, LLMProvider, VectorStoreProvid
 from app.utils.file_extractors import extract_text
 from app.utils.chunking import recursive_chunk
 from app.utils.query_cache import invalidate_client_cache
+from app.services.bm25_search import bm25_registry
 
 logger = logging.getLogger(__name__)
 
@@ -191,8 +192,9 @@ async def upload_document(
             },
         )
 
-        # Invalidate semantic cache for this client since knowledge base changed
+        # Invalidate semantic cache and BM25 index for this client since knowledge base changed
         await invalidate_client_cache(client_id)
+        bm25_registry.invalidate(client_id)
 
         doc_record.update(
             status="ready",
@@ -232,6 +234,7 @@ async def delete_document(
     if result.deleted_count == 0:
         return False
     await vectordb_provider.delete_document(client_id, doc_id)
-    # Invalidate cache since knowledge base changed
+    # Invalidate cache and BM25 index since knowledge base changed
     await invalidate_client_cache(client_id)
+    bm25_registry.invalidate(client_id)
     return True

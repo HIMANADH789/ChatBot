@@ -1,10 +1,10 @@
 import asyncio
 from app.config import settings
 from app.providers.vectordb.chromadb import ChromaDBProvider
-from app.providers.embeddings.huggingface import HuggingFaceProvider
+from app.providers.embeddings.huggingface import HuggingFaceEmbeddingProvider
 
 async def main():
-    emb = HuggingFaceProvider(settings.HUGGINGFACE_MODEL)
+    emb = HuggingFaceEmbeddingProvider(settings.HUGGINGFACE_MODEL)
     vectordb = ChromaDBProvider(settings.CHROMA_PERSIST_DIR)
     
     query = "What happens if a student is caught copying?"

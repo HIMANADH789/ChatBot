@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { api } from "@/lib/api";
-import type { ClientSettings, SubMenu, MenuNode, ContextImage, DescriptiveRule } from "@/types";
+import type { ClientSettings, SubMenu, MenuNode, MenuGraphNode, ContextImage, DescriptiveRule } from "@/types";
+import { MenuGraphBuilder } from "@/components/MenuGraphBuilder";
 
 
 function getClientIdFromToken(): string {
@@ -31,6 +32,57 @@ Be concise, friendly, and professional.`,
   context_capacity: 4,
   menu_options: [],
   menu_tree: [],
+  menu_graph_nodes: [
+    {
+      node_id: "MENU_ROOT",
+      menu_number: "1.0",
+      title: "Welcome & Select Program Stream",
+      whatsapp_media: {
+        image_url: "",
+        caption: "Welcome to our institution",
+      },
+      frequency: "always",
+      options: [
+        {
+          option_number: "1",
+          button_text: "Commerce / CA",
+          target_type: "NAVIGATE_MENU",
+          target_id: "MENU_COMMERCE",
+        },
+        {
+          option_number: "2",
+          button_text: "Admissions Info",
+          target_type: "TRIGGER_RAG",
+          rag_prompt: "What are the admission requirements and application process?",
+        },
+      ],
+    },
+    {
+      node_id: "MENU_COMMERCE",
+      menu_number: "1.1",
+      title: "Commerce & Professional Programs",
+      whatsapp_media: {
+        image_url: "",
+        caption: "Commerce Stream Brochure",
+      },
+      frequency: "always",
+      options: [
+        {
+          option_number: "1",
+          button_text: "CA Foundation",
+          target_type: "TRIGGER_RAG",
+          rag_prompt: "What is the fee structure and syllabus for CA Foundation?",
+        },
+        {
+          option_number: "2",
+          button_text: "CA Intermediate",
+          target_type: "TRIGGER_RAG",
+          rag_prompt: "What is the eligibility and course structure for CA Intermediate?",
+        },
+      ],
+    },
+  ],
+  menu_graph_root_node_id: "MENU_ROOT",
   context_images: [],
   descriptive_rules: [],
 };
@@ -78,6 +130,12 @@ export default function SettingsPage() {
         context_capacity: s?.context_capacity ?? activeSetup?.context_capacity ?? DEFAULTS.context_capacity,
         menu_options: s?.menu_options ?? DEFAULTS.menu_options,
         menu_tree: (s?.menu_tree && s.menu_tree.length > 0) ? s.menu_tree : (activeSetup?.menu_tree ?? DEFAULTS.menu_tree),
+        menu_graph_nodes: (s?.menu_graph_nodes && s.menu_graph_nodes.length > 0)
+          ? s.menu_graph_nodes
+          : (activeSetup?.menu_graph_nodes && activeSetup.menu_graph_nodes.length > 0)
+          ? activeSetup.menu_graph_nodes
+          : DEFAULTS.menu_graph_nodes,
+        menu_graph_root_node_id: s?.menu_graph_root_node_id ?? activeSetup?.menu_graph_root_node_id ?? DEFAULTS.menu_graph_root_node_id,
         context_images: (s?.context_images && s.context_images.length > 0) ? s.context_images : (activeSetup?.context_images ?? DEFAULTS.context_images),
         descriptive_rules: (s?.descriptive_rules && s.descriptive_rules.length > 0) ? s.descriptive_rules : (activeSetup?.descriptive_rules ?? DEFAULTS.descriptive_rules),
       });
@@ -354,268 +412,23 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* 🌳 Hierarchical Interactive Menus & Sub-Menus */}
-      <div className="rounded-xl bg-white p-6 shadow-sm space-y-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">🌳 Hierarchical Interactive Menus (WhatsApp / Widget)</h2>
-            <p className="text-sm text-gray-500">
-              Create recursive menu trees: Root Option (with descriptor trigger tag) → Sub-options → Leaf Action Question.
-            </p>
-          </div>
-          <button
-            onClick={() => {
-              const newRoot: MenuNode = {
-                id: crypto.randomUUID(),
-                label: "New Topic",
-                description: "",
-                descriptor_tag: "",
-                frequency: "on_intent",
-                action_question: "",
-                children: [],
-              };
-              setSettings((s) => ({
-                ...s,
-                menu_tree: [...(s.menu_tree || []), newRoot],
-              }));
-            }}
-            className="rounded-lg bg-blue-50 text-blue-700 border border-blue-200 px-3.5 py-2 text-sm font-medium hover:bg-blue-100"
-          >
-            + Add Root Menu Option
-          </button>
-        </div>
-
-        <div className="space-y-4">
-          {(settings.menu_tree || []).map((rootNode, idx) => (
-            <div key={rootNode.id || idx} className="rounded-xl border border-gray-200 p-4 space-y-3 bg-white">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold px-2.5 py-0.5 rounded bg-blue-100 text-blue-800">
-                  Level 1: Root Topic #{idx + 1}
-                </span>
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => {
-                      const newChild: MenuNode = {
-                        id: crypto.randomUUID(),
-                        label: "Sub-menu Question",
-                        description: "",
-                        descriptor_tag: "",
-                        frequency: "on_intent",
-                        action_question: "",
-                        children: [],
-                      };
-                      const next = [...(settings.menu_tree || [])];
-                      next[idx] = {
-                        ...rootNode,
-                        children: [...(rootNode.children || []), newChild],
-                      };
-                      setSettings({ ...settings, menu_tree: next });
-                    }}
-                    className="text-xs text-blue-600 hover:text-blue-800 font-medium hover:underline"
-                  >
-                    + Add Sub-menu Question
-                  </button>
-                  <button
-                    onClick={() => {
-                      const next = (settings.menu_tree || []).filter((_, i) => i !== idx);
-                      setSettings({ ...settings, menu_tree: next });
-                    }}
-                    className="text-xs text-red-500 hover:text-red-700 font-medium hover:underline"
-                  >
-                    Delete Root
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Display Label (max 24 chars)
-                  </label>
-                  <input
-                    type="text"
-                    value={rootNode.label || ""}
-                    onChange={(e) => {
-                      const next = [...(settings.menu_tree || [])];
-                      next[idx] = { ...rootNode, label: e.target.value };
-                      setSettings({ ...settings, menu_tree: next });
-                    }}
-                    placeholder="e.g., Admissions 2026"
-                    maxLength={24}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Subtitle / Description (optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={rootNode.description || ""}
-                    onChange={(e) => {
-                      const next = [...(settings.menu_tree || [])];
-                      next[idx] = { ...rootNode, description: e.target.value };
-                      setSettings({ ...settings, menu_tree: next });
-                    }}
-                    placeholder="e.g., Application steps, deadlines & quotas"
-                    maxLength={72}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 border-t border-gray-100 pt-3">
-                <div className="md:col-span-2">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    🏷️ Descriptor Tag (When to trigger this menu stream)
-                  </label>
-                  <input
-                    type="text"
-                    value={rootNode.descriptor_tag || ""}
-                    onChange={(e) => {
-                      const next = [...(settings.menu_tree || [])];
-                      next[idx] = { ...rootNode, descriptor_tag: e.target.value };
-                      setSettings({ ...settings, menu_tree: next });
-                    }}
-                    placeholder="e.g., When user asks about applying, enrollment dates, or admission criteria"
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Trigger Frequency
-                  </label>
-                  <select
-                    value={rootNode.frequency || "on_intent"}
-                    onChange={(e) => {
-                      const next = [...(settings.menu_tree || [])];
-                      next[idx] = { ...rootNode, frequency: e.target.value };
-                      setSettings({ ...settings, menu_tree: next });
-                    }}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  >
-                    <option value="on_intent">On Intent / Adaptive</option>
-                    <option value="only_once">Only Once per Session</option>
-                    <option value="always">Always Trigger</option>
-                  </select>
-                </div>
-              </div>
-
-              {(!rootNode.children || rootNode.children.length === 0) && (
-                <div className="border-t border-gray-100 pt-3">
-                  <label className="block text-xs font-medium text-indigo-900 mb-1">
-                    🎯 Leaf Action Question (Question sent to RAG pipeline)
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={rootNode.action_question || ""}
-                    onChange={(e) => {
-                      const next = [...(settings.menu_tree || [])];
-                      next[idx] = { ...rootNode, action_question: e.target.value };
-                      setSettings({ ...settings, menu_tree: next });
-                    }}
-                    placeholder="e.g., What are the full admission requirements and procedure for 2026?"
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-              )}
-
-              {/* Sub-options */}
-              {rootNode.children && rootNode.children.length > 0 && (
-                <div className="pl-4 border-l-2 border-blue-200 space-y-3 mt-3">
-                  {rootNode.children.map((child, cIdx) => (
-                    <div key={child.id || cIdx} className="rounded-lg border border-blue-100 bg-blue-50/40 p-3 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-blue-700">Level 2: Sub-menu Question #{cIdx + 1}</span>
-                        <button
-                          onClick={() => {
-                            const newChildren = (rootNode.children || []).filter((_, i) => i !== cIdx);
-                            const next = [...(settings.menu_tree || [])];
-                            next[idx] = { ...rootNode, children: newChildren };
-                            setSettings({ ...settings, menu_tree: next });
-                          }}
-                          className="text-xs text-red-500 hover:text-red-700"
-                        >
-                          ✕ Remove
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        <input
-                          type="text"
-                          value={child.label || ""}
-                          onChange={(e) => {
-                            const newChildren = [...(rootNode.children || [])];
-                            newChildren[cIdx] = { ...child, label: e.target.value };
-                            const next = [...(settings.menu_tree || [])];
-                            next[idx] = { ...rootNode, children: newChildren };
-                            setSettings({ ...settings, menu_tree: next });
-                          }}
-                          placeholder="Sub-menu Title (e.g., CA Course)"
-                          maxLength={24}
-                          className="rounded border border-gray-300 px-3 py-1.5 text-xs bg-white"
-                        />
-                        <input
-                          type="text"
-                          value={child.description || ""}
-                          onChange={(e) => {
-                            const newChildren = [...(rootNode.children || [])];
-                            newChildren[cIdx] = { ...child, description: e.target.value };
-                            const next = [...(settings.menu_tree || [])];
-                            next[idx] = { ...rootNode, children: newChildren };
-                            setSettings({ ...settings, menu_tree: next });
-                          }}
-                          placeholder="Subtitle (optional)"
-                          maxLength={72}
-                          className="rounded border border-gray-300 px-3 py-1.5 text-xs bg-white"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-indigo-950 mb-0.5">
-                          🎯 Question Feeding RAG Pipeline (Sent to AI when selected):
-                        </label>
-                        <input
-                          type="text"
-                          value={child.action_question || ""}
-                          onChange={(e) => {
-                            const newChildren = [...(rootNode.children || [])];
-                            newChildren[cIdx] = { ...child, action_question: e.target.value };
-                            const next = [...(settings.menu_tree || [])];
-                            next[idx] = { ...rootNode, children: newChildren };
-                            setSettings({ ...settings, menu_tree: next });
-                          }}
-                          placeholder="e.g., What are the eligibility criteria and fees for this program?"
-                          className="w-full rounded border border-gray-300 px-3 py-1.5 text-xs bg-white"
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-
-          {(!settings.menu_tree || settings.menu_tree.length === 0) && (
-            <div className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">
-              No menu options yet. Click &quot;Add Root Menu Option&quot; to build your interactive tree.
-            </div>
-          )}
-        </div>
-
-        <div className="mt-4 flex items-center gap-3">
-          <button
-            onClick={saveSettings}
-            disabled={saving}
-            className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {saving ? "Saving..." : "Save Menus"}
-          </button>
-          {saved && <span className="text-sm text-green-600">Settings saved!</span>}
-        </div>
-      </div>
+      {/* ⚡ Visual Menu & Channel Builder (Graph State Machine) */}
+      <MenuGraphBuilder
+        clientId={clientId}
+        nodes={settings.menu_graph_nodes || []}
+        rootNodeId={settings.menu_graph_root_node_id || "MENU_ROOT"}
+        onChange={(updatedNodes, updatedRootId) => {
+          setSettings((s) => ({
+            ...s,
+            menu_graph_nodes: updatedNodes,
+            menu_graph_root_node_id: updatedRootId,
+          }));
+        }}
+        onSaved={() => {
+          setSaved(true);
+          setTimeout(() => setSaved(false), 3000);
+        }}
+      />
 
       {/* 🖼️ Contextual Images & Media Delivery */}
       <div className="rounded-xl bg-white p-6 shadow-sm space-y-5">

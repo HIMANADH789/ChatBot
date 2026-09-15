@@ -4,6 +4,8 @@ import logging
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
+from app.core.user_event import UserEvent, EventType
+from app.core.hybrid_engine import hybrid_engine
 from app.dependencies import get_embeddings, get_llm, get_vectordb
 from app.models.chat import ChatRequest, ChatResponse, Source
 from app.providers.base import EmbeddingProvider, LLMProvider, VectorStoreProvider
@@ -25,19 +27,27 @@ async def chat_query(
 ):
     channel = request.channel or "widget"
     await check_ip_rate_limit(http_request, client_id, channel)
-    result = await rag_service.query(
-        client_id=client_id,
-        message=request.message,
+    
+    event = UserEvent(
+        tenant_id=client_id,
+        channel=channel,
+        user_id=request.session_id or "web_user",
         session_id=request.session_id,
+        payload=request.message,
+        event_type=EventType.TEXT,
+    )
+
+    result = await hybrid_engine.process_event(
+        event=event,
         llm=llm,
         embeddings=embeddings,
         vectordb=vectordb,
-        channel=channel,
     )
+
     return ChatResponse(
-        response=result["response"],
-        sources=[Source(**s) for s in result["sources"]],
-        session_id=result["session_id"],
+        response=result.text,
+        sources=[Source(**s) for s in result.sources],
+        session_id=result.session_id,
     )
 
 
@@ -54,18 +64,24 @@ async def chat_stream(
     channel = request.channel or "widget"
     await check_ip_rate_limit(http_request, client_id, channel)
 
+    event = UserEvent(
+        tenant_id=client_id,
+        channel=channel,
+        user_id=request.session_id or "web_user",
+        session_id=request.session_id,
+        payload=request.message,
+        event_type=EventType.TEXT,
+    )
+
     async def event_generator():
         try:
-            async for event in rag_service.query_stream(
-                client_id=client_id,
-                message=request.message,
-                session_id=request.session_id,
+            async for chunk in hybrid_engine.process_event_stream(
+                event=event,
                 llm=llm,
                 embeddings=embeddings,
                 vectordb=vectordb,
-                channel=channel,
             ):
-                yield f"data: {json.dumps(event)}\n\n"
+                yield f"data: {json.dumps(chunk)}\n\n"
         except Exception as exc:
             msg = str(exc)
             if "429" in msg or "RESOURCE_EXHAUSTED" in msg:

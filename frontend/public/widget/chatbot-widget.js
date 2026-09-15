@@ -266,9 +266,51 @@
                 } else if (h.type === "done") {
                   if (h.session_id) E = h.session_id;
                   if (i) i.remove();
+
+                  if (h.context_images && h.context_images.length > 0) {
+                    h.context_images.forEach(img => {
+                      let imgContainer = document.createElement("div");
+                      imgContainer.style.marginTop = "8px";
+                      imgContainer.style.marginBottom = "4px";
+                      
+                      let imageEl = document.createElement("img");
+                      let src = img.image_path || "";
+                      if (src.includes("drive.google.com/file/d/")) {
+                        let fileId = src.split("/file/d/")[1].split("/")[0];
+                        src = `https://lh3.googleusercontent.com/d/${fileId}`;
+                      }
+                      imageEl.src = src;
+                      imageEl.alt = img.title || img.caption || "Image";
+                      imageEl.style.maxWidth = "100%";
+                      imageEl.style.maxHeight = "220px";
+                      imageEl.style.objectFit = "cover";
+                      imageEl.style.borderRadius = "12px";
+                      imageEl.style.boxShadow = "0 4px 12px rgba(0,0,0,0.12)";
+                      imageEl.style.display = "block";
+
+                      imgContainer.appendChild(imageEl);
+                      if (img.caption || img.title) {
+                        let cap = document.createElement("div");
+                        cap.textContent = img.caption || img.title;
+                        cap.style.fontSize = "12px";
+                        cap.style.color = "#64748b";
+                        cap.style.marginTop = "4px";
+                        cap.style.fontStyle = "italic";
+                        imgContainer.appendChild(cap);
+                      }
+                      if (t) {
+                        t.appendChild(imgContainer);
+                      } else {
+                        let botMsg = f("bot", "");
+                        botMsg.appendChild(imgContainer);
+                      }
+                    });
+                    a.scrollTop = a.scrollHeight;
+                  }
+
                   let subOpts = (h.interactive_menu && h.interactive_menu.children) ? h.interactive_menu.children : [];
                   if (subOpts.length > 0) {
-                    let t = f("bot", "Options for " + (h.interactive_menu.label || "this topic") + ":");
+                    let optMsg = f("bot", "Options for " + (h.interactive_menu.label || "this topic") + ":");
                     let qr = document.createElement("div");
                     qr.className = "quick-replies";
                     subOpts.forEach(c => {
@@ -279,7 +321,7 @@
                       qb.onclick = () => sendMsg(c.action_question || c.label);
                       qr.appendChild(qb);
                     });
-                    t.appendChild(qr);
+                    optMsg.appendChild(qr);
                     a.scrollTop = a.scrollHeight;
                   }
                 } else if (h.type === "error") {

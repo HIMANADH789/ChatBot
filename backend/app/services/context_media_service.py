@@ -194,12 +194,22 @@ async def evaluate_image_triggers(
         return []
 
     query_lower = query.lower()
+    norm_query = query_lower.replace("&", "and").replace("/", " ")
     matched = []
+
+    stop_words = {
+        "when", "user", "asks", "about", "inquires", "inquiry", "wants", "view",
+        "image", "photo", "chart", "map", "complete", "details", "course", "courses",
+        "institute", "professional", "including", "eligibility", "program", "programs",
+        "coaching", "training", "academy", "overall", "what", "are", "the", "with", "at", "sv",
+        "foundation", "intermediate", "advanced", "and", "or", "for", "in", "on", "of", "to",
+        "is", "it", "by", "from", "an", "a", "as", "also", "can", "you", "give", "me", "tell", "us"
+    }
 
     for img in context_images:
         path = img.get("image_path", "").strip()
         tag = (img.get("descriptor_tag") or "").strip()
-        title = img.get("title", "")
+        title = (img.get("title") or "").strip()
         freq = img.get("frequency", "on_intent")
 
         if not path:
@@ -210,21 +220,23 @@ async def evaluate_image_triggers(
             if _was_image_shown_in_history(path, history) or _was_image_shown_in_history(title, history):
                 continue
 
-        # Check direct title or path keywords
-        if title and title.lower() in query_lower:
+        # 1. Direct title check with normalization
+        norm_title = title.lower().replace("&", "and").replace("/", " ")
+        if norm_title and len(norm_title) >= 2 and norm_title in norm_query:
             matched.append(img)
             continue
 
-        # Descriptor tag match
+        # 2. Descriptor tag match
         if tag:
-            tag_words = [w for w in re.findall(r"\b\w+\b", tag.lower()) if len(w) > 3 and w not in ("when", "user", "asks", "about", "inquires", "inquiry", "wants", "view", "image", "photo", "chart", "map")]
-            query_words = set(re.findall(r"\b\w+\b", query_lower))
-            overlap = sum(1 for tw in tag_words if tw in query_words)
-            if overlap >= 2 or (len(tag_words) == 1 and overlap == 1):
+            norm_tag = tag.lower().replace("&", "and").replace("/", " ")
+            tag_words = set(w for w in re.findall(r"\b\w+\b", norm_tag) if len(w) >= 2 and w not in stop_words)
+            query_words = set(re.findall(r"\b\w+\b", norm_query))
+            overlap = tag_words.intersection(query_words)
+            if len(overlap) >= 1:
                 matched.append(img)
                 continue
 
-            # Check context & query combined if relevant
+            # LLM Fallback check if tag is complex
             if len(query.split()) >= 3:
                 eval_prompt = f"""Evaluate if this image should be attached to answer the user's question.
 User question: "{query}"

@@ -156,10 +156,33 @@ async def compile_client_profile(client_id: str, channel: str = "widget") -> dic
     menu_index: dict[str, dict] = {}
     _flatten_menu_tree(menu_tree, menu_index)
 
+    # Build MenuGraph (new node model) — from explicit config or legacy bridge
+    from app.core.menu_graph import MenuGraph
+    menu_graph_nodes_raw = (
+        setup_cfg.get("menu_graph_nodes")
+        or settings.get("menu_graph_nodes")
+        or []
+    )
+    menu_graph_root_id = (
+        setup_cfg.get("menu_graph_root_node_id")
+        or settings.get("menu_graph_root_node_id")
+        or ""
+    )
+
+    if menu_graph_nodes_raw:
+        # Tenant has explicit MenuGraph nodes defined
+        menu_graph = MenuGraph.from_config(menu_graph_nodes_raw, root_node_id=menu_graph_root_id)
+    elif menu_tree:
+        # Bridge: convert legacy menu_tree to MenuGraph
+        menu_graph = MenuGraph.from_legacy_menu_tree(menu_tree)
+    else:
+        menu_graph = MenuGraph()
+
     # Generate version hash
     hash_payload = json.dumps({
         "prompt": compiled_prompt,
         "menu_count": len(menu_tree),
+        "graph_node_count": menu_graph.node_count,
         "image_count": len(context_images),
         "rule_count": len(descriptive_rules),
         "mode": context_mode,
@@ -177,6 +200,9 @@ async def compile_client_profile(client_id: str, channel: str = "widget") -> dic
         "chatbot_title": settings.get("chatbot_title", "AI Front Desk"),
         "menu_tree": menu_tree,
         "menu_index": menu_index,
+        "menu_graph": menu_graph,
+        "menu_graph_nodes": menu_graph_nodes_raw,
+        "menu_graph_root_node_id": menu_graph_root_id or menu_graph.root_node_id,
         "context_images": context_images,
         "descriptive_rules": descriptive_rules,
         "context_config": {
@@ -189,12 +215,14 @@ async def compile_client_profile(client_id: str, channel: str = "widget") -> dic
     # Store in memory cache
     _PROFILE_CACHE[(client_id, channel)] = compiled_profile
 
-    # Persist in DB under settings.compiled_profiles.{channel}
+    # Persist in DB under settings.compiled_profiles.{channel} (serializable copy)
     try:
+        db_profile = dict(compiled_profile)
+        db_profile["menu_graph"] = menu_graph.to_dict()
         await db[CLIENTS].update_one(
             {"client_id": client_id},
             {"$set": {
-                f"settings.compiled_profiles.{channel}": compiled_profile,
+                f"settings.compiled_profiles.{channel}": db_profile,
                 "settings.last_compiled_at": datetime.now(timezone.utc),
             }}
         )
@@ -220,6 +248,16 @@ async def get_compiled_profile(client_id: str, channel: str = "widget") -> dict:
     if client:
         stored = client.get("settings", {}).get("compiled_profiles", {}).get(channel)
         if stored and isinstance(stored, dict) and stored.get("version_hash"):
+            from app.core.menu_graph import MenuGraph
+            if not isinstance(stored.get("menu_graph"), MenuGraph):
+                nodes_raw = stored.get("menu_graph_nodes") or []
+                root_id = stored.get("menu_graph_root_node_id") or ""
+                if nodes_raw:
+                    stored["menu_graph"] = MenuGraph.from_config(nodes_raw, root_node_id=root_id)
+                elif stored.get("menu_tree"):
+                    stored["menu_graph"] = MenuGraph.from_legacy_menu_tree(stored.get("menu_tree", []))
+                else:
+                    stored["menu_graph"] = MenuGraph()
             _PROFILE_CACHE[key] = stored
             return stored
 

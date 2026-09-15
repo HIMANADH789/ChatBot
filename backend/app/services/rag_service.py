@@ -24,6 +24,7 @@ from app.services.chat_service import add_message, get_history, get_or_create_se
 from app.utils.rate_limiter import RateLimiter
 from app.utils import reranker as reranker_util
 from app.utils.query_cache import check_cache, store_cache
+from app.services.bm25_search import bm25_registry, reciprocal_rank_fusion
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,18 @@ def _is_conversational(message: str) -> bool:
     if len(lower.split()) <= 3 and any(t in lower for t in CONVERSATIONAL_TRIGGERS):
         return True
     return False
+
+
+async def _get_media_triggers(message: str, context: str, profile: dict, history: list, llm: LLMProvider):
+    from app.services.context_media_service import (
+        evaluate_menu_triggers,
+        evaluate_image_triggers,
+    )
+    menu_tree = profile.get("menu_tree", [])
+    context_imgs = profile.get("context_images", [])
+    matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm)
+    matched_images = await evaluate_image_triggers(message, context, context_imgs, history, llm)
+    return matched_menu, matched_images
 
 
 def _clean_markdown(text: str) -> str:
@@ -505,6 +518,7 @@ async def _resolve_contextual_query(
         prompt = _CONTEXT_REWRITE_PROMPT.format(
             query=query,
             history_text=history_text,
+            history_text=history_text,
             context_instructions=instructions,
         )
         resp = await llm.generate(prompt, temperature=0.0, max_tokens=100)
@@ -528,11 +542,14 @@ async def _retrieve_and_rerank(
     vectordb: VectorStoreProvider,
 ) -> tuple[list[dict], list[dict]]:
     """
-    Runs the full retrieval pipeline:
+    Runs the Hybrid Retrieval Pipeline:
       - Optional HyDE embedding
       - Optional metadata filtering
       - Sub-question decomposition (for complex multi-part queries)
-      - Cross-encoder reranking
+      - Dense vector search (ChromaDB / VectorStore)
+      - Sparse keyword search (In-memory BM25 index)
+      - Reciprocal Rank Fusion (RRF) to combine dense + sparse candidate scores
+      - Cross-encoder reranking for top precision
     Returns (all_sources, reranked_candidates).
     """
     DECOMPOSE_SIGNALS = ["and", "also", "as well", "additionally", "what about", "along with"]
@@ -555,6 +572,9 @@ async def _retrieve_and_rerank(
     if where_filter:
         logger.debug(f"Applying metadata filter: {where_filter}")
 
+    # Ensure BM25 index is prepared for this tenant
+    bm25_index = await bm25_registry.ensure_indexed(client_id)
+
     seen_chunks: set[str] = set()
     all_candidates: list[dict] = []
 
@@ -566,17 +586,29 @@ async def _retrieve_and_rerank(
         else:
             sq_embedding = await embeddings.embed_query(sq)
 
-        # Fetch more candidates than needed so reranker has room to work
-        candidates = await vectordb.search(
+        # 1. Dense vector candidate retrieval
+        dense_candidates = await vectordb.search(
             client_id,
             sq_embedding,
             top_k=25,
             where=where_filter,
         )
 
-        for r in candidates:
-            chunk_key = f"{r['metadata'].get('doc_id','')}_{r['metadata'].get('chunk_index','')}"
-            if chunk_key not in seen_chunks and r["score"] > 0.20:
+        # 2. Sparse BM25 keyword candidate retrieval
+        sparse_candidates = bm25_index.search(sq, top_k=25)
+
+        # 3. Hybrid fusion via Reciprocal Rank Fusion (RRF)
+        fused_sq_candidates = reciprocal_rank_fusion(
+            dense_results=dense_candidates,
+            sparse_results=sparse_candidates,
+            top_k=25,
+            dense_weight=0.6,
+            sparse_weight=0.4,
+        )
+
+        for r in fused_sq_candidates:
+            chunk_key = f"{r.get('metadata', {}).get('doc_id','')}_{r.get('metadata', {}).get('chunk_index','')}"
+            if chunk_key not in seen_chunks:
                 seen_chunks.add(chunk_key)
                 all_candidates.append(r)
 
@@ -594,24 +626,36 @@ async def _retrieve_and_rerank(
     all_sources = []
     seen_docs = set()
     for c in top_candidates:
-        doc_id = c["metadata"].get("doc_id", "")
+        doc_id = c.get("metadata", {}).get("doc_id", "")
         if doc_id not in seen_docs:
             seen_docs.add(doc_id)
             all_sources.append({
                 "doc_id": doc_id,
-                "filename": c["metadata"].get("filename", ""),
-                "chunk_index": c["metadata"].get("chunk_index", 0),
-                "score": round(c["score"], 3),
-                "text_preview": c["text"][:200],
+                "filename": c.get("metadata", {}).get("filename", ""),
+                "chunk_index": c.get("metadata", {}).get("chunk_index", 0),
+                "score": round(c.get("score", 0.0), 3),
+                "text_preview": c.get("text", "")[:200],
             })
 
     return all_sources, top_candidates
 
 
-def _build_rag_prompt(context: str, history_text: str, message: str) -> str:
+def _build_rag_prompt(
+    context: str,
+    history_text: str,
+    message: str,
+    context_variables: Optional[dict] = None,
+) -> str:
+    user_context_block = ""
+    if context_variables:
+        active_vars = [f"• {k.replace('_', ' ').title()}: {v}" for k, v in context_variables.items() if v]
+        if active_vars:
+            user_context_block = "Active User Session Profile Context:\n" + "\n".join(active_vars) + "\n\n"
+
     return f"""Context from knowledge base:
 {context}
-{history_text}
+
+{user_context_block}{history_text}
 User question: {message}
 
 Answer guidelines:
@@ -635,6 +679,7 @@ async def query(
     embeddings: EmbeddingProvider,
     vectordb: VectorStoreProvider,
     channel: str = "widget",
+    context_variables: Optional[dict] = None,
 ) -> dict:
     start = time.time()
     db = get_db()
@@ -735,7 +780,14 @@ async def query(
             await add_message(session_id, "assistant", cached["response"], cached["sources"])
             response_time = int((time.time() - start) * 1000)
             await _log_query(client_id, session_id, message, cached["response"], cached["sources"], response_time, "cache", {}, channel=channel)
-            return {"response": cached["response"], "sources": cached["sources"], "session_id": session_id}
+            matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm)
+            return {
+                "response": cached["response"],
+                "sources": cached["sources"],
+                "session_id": session_id,
+                "interactive_menu": matched_menu,
+                "context_images": matched_images,
+            }
 
     # Retrieve + rerank
     all_sources, top_candidates = await _retrieve_and_rerank(client_id, search_query, llm, embeddings, vectordb)
@@ -762,15 +814,7 @@ Instructions:
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, text, [], response_time, llm_response.model, llm_response.usage, channel=channel)
 
-        from app.services.context_media_service import (
-            evaluate_menu_triggers,
-            evaluate_image_triggers,
-        )
-        menu_tree = profile.get("menu_tree", [])
-        context_imgs = profile.get("context_images", [])
-        matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm)
-        matched_images = await evaluate_image_triggers(message, "", context_imgs, history, llm)
-
+        matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm)
         return {
             "response": text,
             "sources": [],
@@ -785,10 +829,17 @@ Instructions:
         await add_message(session_id, "assistant", clarification)
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, clarification, [], response_time, llm.get_model_name(), {}, channel=channel)
-        return {"response": clarification, "sources": [], "session_id": session_id}
+        matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm)
+        return {
+            "response": clarification,
+            "sources": [],
+            "session_id": session_id,
+            "interactive_menu": matched_menu,
+            "context_images": matched_images,
+        }
 
     context = "\n\n---\n\n".join(c["text"] for c in top_candidates)
-    prompt = _build_rag_prompt(context, history_text, message)
+    prompt = _build_rag_prompt(context, history_text, message, context_variables=context_variables)
 
     can_proceed = await _rate_limiter.acquire()
     if not can_proceed:
@@ -807,15 +858,7 @@ Instructions:
     if settings.CACHE_ENABLED and text != FALLBACK_MESSAGE and len(text) >= 20:
         await store_cache(client_id, search_query, query_embedding_for_cache, text, all_sources)
 
-    # Evaluate contextual menu triggers and image attachments from compiled snapshot
-    from app.services.context_media_service import (
-        evaluate_menu_triggers,
-        evaluate_image_triggers,
-    )
-    menu_tree = profile.get("menu_tree", [])
-    context_imgs = profile.get("context_images", [])
-    matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm)
-    matched_images = await evaluate_image_triggers(message, context, context_imgs, history, llm)
+    matched_menu, matched_images = await _get_media_triggers(message, context, profile, history, llm)
 
     return {
         "response": text,
@@ -836,6 +879,7 @@ async def query_stream(
     embeddings: EmbeddingProvider,
     vectordb: VectorStoreProvider,
     channel: str = "widget",
+    context_variables: Optional[dict] = None,
 ):
     start = time.time()
     db = get_db()
@@ -946,8 +990,15 @@ async def query_stream(
             await add_message(session_id, "assistant", cached["response"], cached["sources"])
             response_time = int((time.time() - start) * 1000)
             await _log_query(client_id, session_id, message, cached["response"], cached["sources"], response_time, "cache", {}, channel=channel)
+            matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm)
             yield {"type": "token", "text": cached["response"]}
-            yield {"type": "done", "session_id": session_id, "sources": cached["sources"]}
+            yield {
+                "type": "done",
+                "session_id": session_id,
+                "sources": cached["sources"],
+                "interactive_menu": matched_menu,
+                "context_images": matched_images,
+            }
             return
 
     # Retrieve + rerank
@@ -980,15 +1031,7 @@ Instructions:
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, full_text, [], response_time, llm.get_model_name(), {}, channel=channel)
 
-        from app.services.context_media_service import (
-            evaluate_menu_triggers,
-            evaluate_image_triggers,
-        )
-        menu_tree = profile.get("menu_tree", [])
-        context_imgs = profile.get("context_images", [])
-        matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm)
-        matched_images = await evaluate_image_triggers(message, "", context_imgs, history, llm)
-
+        matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm)
         yield {
             "type": "done",
             "session_id": session_id,
@@ -1004,12 +1047,19 @@ Instructions:
         await add_message(session_id, "assistant", clarification)
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, clarification, [], response_time, llm.get_model_name(), {}, channel=channel)
+        matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm)
         yield {"type": "token", "text": clarification}
-        yield {"type": "done", "session_id": session_id, "sources": []}
+        yield {
+            "type": "done",
+            "session_id": session_id,
+            "sources": [],
+            "interactive_menu": matched_menu,
+            "context_images": matched_images,
+        }
         return
 
     context = "\n\n---\n\n".join(c["text"] for c in top_candidates)
-    prompt = _build_rag_prompt(context, history_text, message)
+    prompt = _build_rag_prompt(context, history_text, message, context_variables=context_variables)
 
     can_proceed = await _rate_limiter.acquire()
     if not can_proceed:
@@ -1033,14 +1083,7 @@ Instructions:
     if settings.CACHE_ENABLED and query_embedding_for_cache is not None and full_text != FALLBACK_MESSAGE and len(full_text) >= 20:
         await store_cache(client_id, search_query, query_embedding_for_cache, full_text, all_sources)
 
-    from app.services.context_media_service import (
-        evaluate_menu_triggers,
-        evaluate_image_triggers,
-    )
-    menu_tree = profile.get("menu_tree", [])
-    context_imgs = profile.get("context_images", [])
-    matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm)
-    matched_images = await evaluate_image_triggers(message, context, context_imgs, history, llm)
+    matched_menu, matched_images = await _get_media_triggers(message, context, profile, history, llm)
 
     yield {
         "type": "done",

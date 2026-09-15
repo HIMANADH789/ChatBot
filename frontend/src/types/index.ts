@@ -135,6 +135,37 @@ export interface MenuNode {
   children?: MenuNode[];
 }
 
+export interface WhatsAppMedia {
+  image_url?: string;
+  caption?: string;
+}
+
+export interface NodeOption {
+  option_number: string;
+  button_text: string;
+  target_type: "NAVIGATE_MENU" | "TRIGGER_RAG" | string;
+  target_id?: string;
+  rag_prompt?: string;
+}
+
+export interface MenuGraphNode {
+  node_id: string;
+  menu_number: string;
+  title: string;
+  whatsapp_media?: WhatsAppMedia;
+  options: NodeOption[];
+  frequency?: "always" | "only_once" | string;
+  direct_answer?: string;
+}
+
+export interface MenuGraphValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  node_count: number;
+  root_node_id: string;
+}
+
 export interface ContextImage {
   id: string;
   title: string;
@@ -179,6 +210,8 @@ export interface ClientSettings {
   custom_widget_script?: string;
   menu_options?: MenuOption[];
   menu_tree?: MenuNode[];
+  menu_graph_nodes?: MenuGraphNode[];
+  menu_graph_root_node_id?: string;
   context_images?: ContextImage[];
   descriptive_rules?: DescriptiveRule[];
   system_prompt?: string;

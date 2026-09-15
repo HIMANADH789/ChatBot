@@ -26,6 +26,8 @@ def setup_defaults(channel: str) -> dict:
         "context_instructions": "",          # Specific entities/details to track
         "context_capacity": 4,               # Number of turns to scan
         "menu_tree": [],                     # Channel-specific or inherited menu tree
+        "menu_graph_nodes": [],              # Serial-numbered dynamic menu graph nodes
+        "menu_graph_root_node_id": "MENU_ROOT",
         "context_images": [],                # Contextual image triggers
         "descriptive_rules": [],             # Client-configured descriptive trigger policies
     }
@@ -150,6 +152,8 @@ class ClientSettings(BaseModel):
     custom_widget_script: str = ""
     menu_options: list[MenuOption] = Field(default_factory=list)
     menu_tree: list[MenuNode] = Field(default_factory=list)
+    menu_graph_nodes: list[Dict[str, Any]] = Field(default_factory=list)
+    menu_graph_root_node_id: Optional[str] = "MENU_ROOT"
     context_images: list[ContextImage] = Field(default_factory=list)
     descriptive_rules: list[DescriptiveRule] = Field(default_factory=list)
 

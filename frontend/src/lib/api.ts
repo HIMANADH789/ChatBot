@@ -85,6 +85,21 @@ export const api = {
   updateClientSettings: (clientId: string, settings: Record<string, unknown>) =>
     request(`/clients/${clientId}/settings`, { method: "PATCH", body: JSON.stringify(settings) }),
 
+  validateMenuGraph: (clientId: string, nodes: import("@/types").MenuGraphNode[], rootNodeId?: string) =>
+    request<import("@/types").MenuGraphValidationResult>(`/clients/${clientId}/validate-menu-graph`, {
+      method: "POST",
+      body: JSON.stringify({ nodes, root_node_id: rootNodeId }),
+    }),
+
+  publishMenuGraph: (clientId: string, nodes: import("@/types").MenuGraphNode[], rootNodeId?: string) =>
+    request<{ message: string; validation: import("@/types").MenuGraphValidationResult; compiled_setups: Record<string, any> }>(
+      `/clients/${clientId}/publish-menu-graph`,
+      {
+        method: "POST",
+        body: JSON.stringify({ nodes, root_node_id: rootNodeId }),
+      }
+    ),
+
   createClient: (data: { client_id: string; name: string; domain?: string; admin_email?: string; admin_password?: string }) =>
     request<{ message: string; client_id: string }>("/clients", { method: "POST", body: JSON.stringify(data) }),
 
