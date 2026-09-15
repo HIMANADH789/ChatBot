@@ -518,7 +518,6 @@ async def _resolve_contextual_query(
         prompt = _CONTEXT_REWRITE_PROMPT.format(
             query=query,
             history_text=history_text,
-            history_text=history_text,
             context_instructions=instructions,
         )
         resp = await llm.generate(prompt, temperature=0.0, max_tokens=100)

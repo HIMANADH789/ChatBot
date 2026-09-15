@@ -4,7 +4,8 @@ FROM python:3.11-slim
 # Prevent Python from writing .pyc files & buffer stdout/stderr for real-time logs
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PORT=8000
+    PORT=8000 \
+    PATH="/opt/venv/bin:$PATH"
 
 WORKDIR /app
 
@@ -14,9 +15,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+# Create a virtual environment to isolate dependencies and silence pip root warning
+RUN python -m venv /opt/venv
+
 # Copy dependencies first to leverage Docker layer caching
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Download ONNX quantized weights (~80MB) and tokenizer files during build
 RUN mkdir -p app/providers/embeddings/model_onnx && \
