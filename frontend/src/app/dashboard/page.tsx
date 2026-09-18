@@ -37,6 +37,78 @@ function AdminOverview() {
         ))}
       </div>
 
+      {/* Quick Actions */}
+      <div className="mb-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="mb-4 text-base font-semibold text-slate-900">Quick Actions</h2>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Link
+            href="/dashboard/settings"
+            className="group flex flex-col justify-between rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 transition hover:bg-emerald-50 hover:shadow-sm"
+          >
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-100 text-sm font-bold text-emerald-700">
+                  ⚡
+                </span>
+                <h3 className="font-semibold text-sm text-slate-800 group-hover:text-emerald-800">
+                  Visual Menu & Channel Builder
+                </h3>
+              </div>
+              <p className="mt-2 text-xs text-slate-500 leading-relaxed">
+                Build serial-numbered interactive menus, attach WhatsApp media headers, and configure RAG prompt triggers.
+              </p>
+            </div>
+            <span className="mt-3 text-xs font-semibold text-emerald-700 group-hover:underline">
+              Open Visual Builder &rarr;
+            </span>
+          </Link>
+
+          <Link
+            href="/dashboard/documents"
+            className="group flex flex-col justify-between rounded-xl border border-blue-200 bg-blue-50/50 p-4 transition hover:bg-blue-50 hover:shadow-sm"
+          >
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-100 text-sm font-bold text-blue-700">
+                  📄
+                </span>
+                <h3 className="font-semibold text-sm text-slate-800 group-hover:text-blue-800">
+                  Knowledge Documents
+                </h3>
+              </div>
+              <p className="mt-2 text-xs text-slate-500 leading-relaxed">
+                Upload PDFs, prospectuses, and brochures for semantic search and vector indexing.
+              </p>
+            </div>
+            <span className="mt-3 text-xs font-semibold text-blue-700 group-hover:underline">
+              Manage Documents &rarr;
+            </span>
+          </Link>
+
+          <Link
+            href="/dashboard/chat-test"
+            className="group flex flex-col justify-between rounded-xl border border-purple-200 bg-purple-50/50 p-4 transition hover:bg-purple-50 hover:shadow-sm"
+          >
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-purple-100 text-sm font-bold text-purple-700">
+                  💬
+                </span>
+                <h3 className="font-semibold text-sm text-slate-800 group-hover:text-purple-800">
+                  Interactive Test Chat
+                </h3>
+              </div>
+              <p className="mt-2 text-xs text-slate-500 leading-relaxed">
+                Simulate conversations in real time across WhatsApp, web widget, and API channels.
+              </p>
+            </div>
+            <span className="mt-3 text-xs font-semibold text-purple-700 group-hover:underline">
+              Launch Test Sandbox &rarr;
+            </span>
+          </Link>
+        </div>
+      </div>
+
       {stats && stats.avg_response_time_ms > 0 && (
         <div className="rounded-xl bg-white p-6 shadow-sm">
           <h2 className="mb-2 text-lg font-semibold">Performance</h2>

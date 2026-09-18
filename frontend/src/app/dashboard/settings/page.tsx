@@ -87,10 +87,6 @@ Be concise, friendly, and professional.`,
   descriptive_rules: [],
 };
 
-function newSubMenu(): SubMenu {
-  return { id: crypto.randomUUID(), label: "New Submenu", sub_questions: [] };
-}
-
 export default function SettingsPage() {
   const [clientId, setClientId] = useState("");
   const [backendUrl, setBackendUrl] = useState("http://localhost:8000");
@@ -99,6 +95,7 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<"persona" | "menu_graph" | "web_config" | "channels">("persona");
 
   const [settings, setSettings] = useState<ClientSettings>(DEFAULTS);
   const [setups, setSetups] = useState<any[]>([]);
@@ -201,134 +198,184 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Settings</h1>
-        <span className="text-sm text-gray-500">
-          Client ID: <span className="font-medium text-blue-600">{clientId}</span>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-200 pb-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Institution Configuration</h1>
+          <p className="text-xs text-gray-500 mt-1">Manage AI personality, dynamic menu state machine, web widget script, and multi-channel parameters.</p>
+        </div>
+        <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-lg border border-gray-200 font-mono">
+          Client ID: <span className="font-bold text-blue-600">{clientId}</span>
         </span>
       </div>
 
-      {/* Chatbot Behaviour */}
-      <div className="rounded-xl bg-white p-6 shadow-sm">
-        <h2 className="mb-1 text-lg font-semibold">Chatbot Behaviour</h2>
-        <p className="mb-5 text-sm text-gray-500">
-          Configure how the chatbot introduces itself and responds to users.
-        </p>
+      {/* Modern Configuration Tabs */}
+      <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-2">
+        <button
+          onClick={() => setActiveTab("persona")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
+            activeTab === "persona"
+              ? "bg-blue-600 text-white shadow-sm"
+              : "bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200"
+          }`}
+        >
+          <span>🤖</span> AI Persona &amp; Behaviour
+        </button>
 
-        <div className="space-y-5">
+        <button
+          onClick={() => setActiveTab("menu_graph")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
+            activeTab === "menu_graph"
+              ? "bg-blue-600 text-white shadow-sm"
+              : "bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200"
+          }`}
+        >
+          <span>⚡</span> Menu Graph State Machine
+        </button>
+
+        <button
+          onClick={() => setActiveTab("web_config")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
+            activeTab === "web_config"
+              ? "bg-blue-600 text-white shadow-sm"
+              : "bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200"
+          }`}
+        >
+          <span>🌐</span> Web Widget &amp; Integration Code
+        </button>
+
+        <button
+          onClick={() => setActiveTab("channels")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
+            activeTab === "channels"
+              ? "bg-blue-600 text-white shadow-sm"
+              : "bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200"
+          }`}
+        >
+          <span>💬</span> WhatsApp &amp; Channel Credentials
+        </button>
+      </div>
+
+      {/* Tab 1: AI Persona & Chatbot Behaviour */}
+      {activeTab === "persona" && (
+        <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-6">
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Welcome Message
-            </label>
-            <p className="mb-2 text-xs text-gray-400">
-              The first message users see when they open the chat widget.
+            <h2 className="text-lg font-semibold text-gray-900">Chatbot Personality &amp; Persona</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Configure how the AI introduces itself, speaks, and responds during grounded fallback or RAG queries.
             </p>
-            <textarea
-              value={settings.welcome_message}
-              onChange={(e) =>
-                setSettings((s) => ({ ...s, welcome_message: e.target.value }))
-              }
-              rows={5}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              placeholder={"Hello! 👋\nWelcome to our support system.\nHow can I help you today?"}
-            />
           </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Chatbot Title
-            </label>
-            <p className="mb-2 text-xs text-gray-400">
-              The title displayed at the top of the chat window.
-            </p>
-            <input
-              type="text"
-              value={settings.chatbot_title}
-              onChange={(e) =>
-                setSettings((s) => ({ ...s, chatbot_title: e.target.value }))
-              }
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              placeholder="e.g. AI Front Desk"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              System Prompt
-            </label>
-            <p className="mb-2 text-xs text-gray-400">
-              Instructions that define the chatbot&apos;s personality, tone, and rules. This is
-              sent to the AI on every query — be specific about your institution&apos;s name and
-              style.
-            </p>
-            <textarea
-              value={settings.system_prompt}
-              onChange={(e) =>
-                setSettings((s) => ({ ...s, system_prompt: e.target.value }))
-              }
-              rows={7}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              placeholder="You are a helpful assistant for..."
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-5">
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">
-                Theme Color
+                Welcome Message
               </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  value={settings.theme_color}
+              <p className="mb-2 text-xs text-gray-400">
+                The default greeting presented when a visitor opens the chat widget.
+              </p>
+              <textarea
+                value={settings.welcome_message}
+                onChange={(e) =>
+                  setSettings((s) => ({ ...s, welcome_message: e.target.value }))
+                }
+                rows={4}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                placeholder={"Hello! 👋\nWelcome to our institution.\nHow can I assist you today?"}
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Chatbot Title
+              </label>
+              <p className="mb-2 text-xs text-gray-400">
+                Header text shown in the widget header.
+              </p>
+              <input
+                type="text"
+                value={settings.chatbot_title}
+                onChange={(e) =>
+                  setSettings((s) => ({ ...s, chatbot_title: e.target.value }))
+                }
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                placeholder="e.g. AI Front Desk"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                System Prompt
+              </label>
+              <p className="mb-2 text-xs text-gray-400">
+                System prompt defining the assistant&apos;s persona, tone, rules, and grounding parameters.
+              </p>
+              <textarea
+                value={settings.system_prompt}
+                onChange={(e) =>
+                  setSettings((s) => ({ ...s, system_prompt: e.target.value }))
+                }
+                rows={6}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                placeholder="You are a helpful assistant for..."
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Theme Color
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={settings.theme_color}
+                    onChange={(e) =>
+                      setSettings((s) => ({ ...s, theme_color: e.target.value }))
+                    }
+                    className="h-10 w-14 cursor-pointer rounded border border-gray-300"
+                  />
+                  <input
+                    value={settings.theme_color}
+                    onChange={(e) =>
+                      setSettings((s) => ({ ...s, theme_color: e.target.value }))
+                    }
+                    className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono"
+                    placeholder="#1E40AF"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Conversation Memory (turns)
+                </label>
+                <p className="mb-1 text-xs text-gray-400">
+                  Number of past dialogue turns maintained in history.
+                </p>
+                <select
+                  value={settings.max_history_turns}
                   onChange={(e) =>
-                    setSettings((s) => ({ ...s, theme_color: e.target.value }))
+                    setSettings((s) => ({
+                      ...s,
+                      max_history_turns: Number(e.target.value),
+                    }))
                   }
-                  className="h-10 w-14 cursor-pointer rounded border border-gray-300"
-                />
-                <input
-                  value={settings.theme_color}
-                  onChange={(e) =>
-                    setSettings((s) => ({ ...s, theme_color: e.target.value }))
-                  }
-                  className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono"
-                  placeholder="#1E40AF"
-                />
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                >
+                  {[1, 3, 5, 10].map((n) => (
+                    <option key={n} value={n}>
+                      {n} turns
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Conversation Memory (turns)
-              </label>
-              <p className="mb-1 text-xs text-gray-400">
-                How many past exchanges the bot remembers.
-              </p>
-              <select
-                value={settings.max_history_turns}
-                onChange={(e) =>
-                  setSettings((s) => ({
-                    ...s,
-                    max_history_turns: Number(e.target.value),
-                  }))
-                }
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-              >
-                {[1, 3, 5, 10].map((n) => (
-                  <option key={n} value={n}>
-                    {n} turns
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Context-Adaptive RAG & Multi-Turn Memory */}
-          <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-5 space-y-4">
-            <div className="flex items-center justify-between">
+            {/* Context-Adaptive RAG */}
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-5 space-y-4">
               <div>
                 <h3 className="text-sm font-semibold text-indigo-950 flex items-center gap-2">
-                  <span>🧠 Context-Adaptive RAG (Context Carrying)</span>
+                  <span>🧠 Context-Adaptive RAG &amp; Multi-Turn Memory</span>
                   <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${
                     settings.context_mode === "adaptive" ? "bg-indigo-200 text-indigo-900" :
                     settings.context_mode === "full" ? "bg-purple-200 text-purple-900" : "bg-gray-200 text-gray-700"
@@ -337,227 +384,256 @@ export default function SettingsPage() {
                   </span>
                 </h3>
                 <p className="text-xs text-indigo-700 mt-0.5">
-                  Resolves pronouns (&quot;it&quot;, &quot;its fee&quot;, &quot;that department&quot;) into unambiguous search queries before vector retrieval.
+                  Resolves pronouns (&quot;it&quot;, &quot;its fee&quot;) into explicit queries before vector similarity search.
                 </p>
               </div>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-gray-700">
-                  Context Carrying Mode
-                </label>
-                <select
-                  value={settings.context_mode || "none"}
-                  onChange={(e) => setSettings((s) => ({ ...s, context_mode: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                >
-                  <option value="none">None (Standard / Standalone Retrieval — Default)</option>
-                  <option value="adaptive">Adaptive (Auto-detects pronouns &amp; follow-up questions)</option>
-                  <option value="full">Full (Always synthesizes query against chat history)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-gray-700">
-                  Context Memory Capacity
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={settings.context_capacity ?? 4}
-                    onChange={(e) => setSettings((s) => ({ ...s, context_capacity: Math.max(1, Math.min(10, Number(e.target.value))) }))}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-gray-700">
+                    Context Mode
+                  </label>
+                  <select
+                    value={settings.context_mode || "none"}
+                    onChange={(e) => setSettings((s) => ({ ...s, context_mode: e.target.value }))}
                     className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                  <span className="text-xs text-gray-500 shrink-0">turns</span>
+                  >
+                    <option value="none">None (Standard / Standalone Retrieval)</option>
+                    <option value="adaptive">Adaptive (Auto-detects pronouns &amp; follow-up questions)</option>
+                    <option value="full">Full (Always synthesizes query against chat history)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-gray-700">
+                    Context Memory Capacity
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={settings.context_capacity ?? 4}
+                      onChange={(e) => setSettings((s) => ({ ...s, context_capacity: Math.max(1, Math.min(10, Number(e.target.value))) }))}
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                    />
+                    <span className="text-xs text-gray-500 shrink-0">turns</span>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-gray-700">
-                Tracked Details &amp; Developer Directives
-              </label>
-              <p className="mb-1 text-xs text-gray-400">
-                Specify entities, fields, and details to retain in direct development terminology (zero translation overhead).
-              </p>
-              <textarea
-                rows={2}
-                value={settings.context_instructions || ""}
-                onChange={(e) => setSettings((s) => ({ ...s, context_instructions: e.target.value }))}
-                placeholder="e.g., Track course_name, branch, fee_structure, admission_category, eligibility_criteria, application_deadline, semester."
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-mono focus:border-blue-500 focus:outline-none"
-              />
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-gray-700">
+                  Tracked Entities &amp; Directives
+                </label>
+                <textarea
+                  rows={2}
+                  value={settings.context_instructions || ""}
+                  onChange={(e) => setSettings((s) => ({ ...s, context_instructions: e.target.value }))}
+                  placeholder="e.g., Track course_name, branch, fee_structure, eligibility_criteria."
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-mono focus:border-blue-500 focus:outline-none"
+                />
+              </div>
             </div>
           </div>
-        </div>
 
-        {error && (
-          <p className="mt-3 text-sm text-red-600">{error}</p>
-        )}
+          {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
-        <div className="mt-6 flex items-center gap-3">
-          <button
-            onClick={saveSettings}
-            disabled={saving}
-            className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {saving ? "Saving..." : "Save Settings"}
-          </button>
-          {saved && (
-            <span className="text-sm text-green-600">Settings saved!</span>
-          )}
-        </div>
-      </div>
-
-      {/* ⚡ Visual Menu & Channel Builder (Graph State Machine) */}
-      <MenuGraphBuilder
-        clientId={clientId}
-        nodes={settings.menu_graph_nodes || []}
-        rootNodeId={settings.menu_graph_root_node_id || "MENU_ROOT"}
-        onChange={(updatedNodes, updatedRootId) => {
-          setSettings((s) => ({
-            ...s,
-            menu_graph_nodes: updatedNodes,
-            menu_graph_root_node_id: updatedRootId,
-          }));
-        }}
-        onSaved={() => {
-          setSaved(true);
-          setTimeout(() => setSaved(false), 3000);
-        }}
-      />
-
-      {/* Widget Integration */}
-      <div className="rounded-xl bg-white p-6 shadow-sm">
-        <h2 className="mb-1 text-lg font-semibold">Widget Integration</h2>
-        <p className="mb-5 text-sm text-gray-500">
-          Paste this script tag before the closing &lt;/body&gt; tag on your website.
-        </p>
-
-        <div className="mb-4">
-          <label className="mb-1 block text-sm font-medium text-gray-700">
-            Backend URL
-          </label>
-          <input
-            value={backendUrl}
-            onChange={(e) => setBackendUrl(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            placeholder="https://your-backend.onrender.com"
-          />
-        </div>
-
-        <div className="relative">
-          <pre className="overflow-x-auto rounded-lg bg-gray-900 p-4 text-sm text-green-400">
-            {widgetCode}
-          </pre>
-          <button
-            onClick={copyCode}
-            className="absolute right-3 top-3 rounded bg-gray-700 px-3 py-1 text-xs text-white hover:bg-gray-600"
-          >
-            {copied ? "Copied!" : "Copy"}
-          </button>
-        </div>
-      </div>
-
-      {/* Integrations & Channels */}
-      {setups.filter(s => s.enabled && s.channel !== "widget" && s.channel !== "web_api").length > 0 && (
-        <div className="rounded-xl bg-white p-6 shadow-sm">
-          <h2 className="mb-1 text-lg font-semibold">Integrations &amp; Channels</h2>
-          <p className="mb-5 text-sm text-gray-500">
-            Configure credentials for third-party integrations enabled for your account.
-          </p>
-
-          <div className="space-y-6">
-            {setups.filter(s => s.enabled && s.channel !== "widget" && s.channel !== "web_api").map(setup => (
-              <div key={setup.channel} className="rounded-lg border border-gray-200 p-5">
-                <div className="flex items-center gap-2 mb-4">
-                  <span className="text-xl">{setup.emoji}</span>
-                  <h3 className="font-semibold text-gray-800">{setup.label}</h3>
-                </div>
-
-                {setupConfigs[setup.channel] ? (
-                  <div className="space-y-4">
-                    {/* Channel specific fields */}
-                    {setup.channel === "whatsapp" && (
-                      <>
-                        <div>
-                          <label className="mb-1 block text-sm font-medium text-gray-700">Phone Number ID</label>
-                          <input
-                            type="text"
-                            value={setupConfigs[setup.channel].phone_number_id || ""}
-                            onChange={(e) => setSetupConfigs(prev => ({ ...prev, [setup.channel]: { ...prev[setup.channel], phone_number_id: e.target.value } }))}
-                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-sm font-medium text-gray-700">Access Token</label>
-                          <input
-                            type="password"
-                            value={setupConfigs[setup.channel].access_token || ""}
-                            onChange={(e) => setSetupConfigs(prev => ({ ...prev, [setup.channel]: { ...prev[setup.channel], access_token: e.target.value } }))}
-                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                            placeholder={setupConfigs[setup.channel].access_token === "••••••••••••••••" ? "••••••••••••••••" : ""}
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-sm font-medium text-gray-700">Verify Token</label>
-                          <input
-                            type="password"
-                            value={setupConfigs[setup.channel].verify_token || ""}
-                            onChange={(e) => setSetupConfigs(prev => ({ ...prev, [setup.channel]: { ...prev[setup.channel], verify_token: e.target.value } }))}
-                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                            placeholder={setupConfigs[setup.channel].verify_token === "••••••••••••••••" ? "••••••••••••••••" : ""}
-                          />
-                        </div>
-                      </>
-                    )}
-
-                    {/* Generic Fallback for other channels if needed */}
-                    {setup.channel !== "whatsapp" && Object.keys(setupConfigs[setup.channel]).map(key => {
-                      if (["enabled", "rate_limit_rpm", "rate_limit_rpd", "max_queries_per_session"].includes(key)) return null;
-                      return (
-                        <div key={key}>
-                          <label className="mb-1 block text-sm font-medium text-gray-700">{key.replace(/_/g, ' ').toUpperCase()}</label>
-                          <input
-                            type="text"
-                            value={setupConfigs[setup.channel][key] || ""}
-                            onChange={(e) => setSetupConfigs(prev => ({ ...prev, [setup.channel]: { ...prev[setup.channel], [key]: e.target.value } }))}
-                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                          />
-                        </div>
-                      );
-                    })}
-
-                    <button
-                      onClick={() => saveIntegrationConfig(setup.channel)}
-                      disabled={savingSetups[setup.channel]}
-                      className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                    >
-                      {savingSetups[setup.channel] ? "Saving..." : `Save ${setup.label}`}
-                    </button>
-                  </div>
-                ) : (
-                  <div className="animate-pulse flex h-10 w-full bg-gray-100 rounded"></div>
-                )}
-              </div>
-            ))}
+          <div className="flex items-center gap-3 pt-2">
+            <button
+              onClick={saveSettings}
+              disabled={saving}
+              className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? "Saving..." : "Save AI Persona Settings"}
+            </button>
+            {saved && <span className="text-sm text-green-600">Settings saved!</span>}
           </div>
         </div>
       )}
 
-      {/* Quick Guide */}
-      <div className="rounded-xl bg-white p-6 shadow-sm">
-        <h2 className="mb-4 text-lg font-semibold">Quick Setup Guide</h2>
-        <ol className="list-decimal space-y-2 pl-5 text-sm text-gray-600">
-          <li>Upload your institution&apos;s documents in the <strong>Documents</strong> section</li>
-          <li>Configure the chatbot behaviour above and click <strong>Save Settings</strong></li>
-          <li>Test the chatbot using the <strong>Test Chat</strong> page</li>
-          <li>Copy the widget code and paste it on your website</li>
-        </ol>
-      </div>
+      {/* Tab 2: Menu Graph State Machine */}
+      {activeTab === "menu_graph" && (
+        <MenuGraphBuilder
+          clientId={clientId}
+          nodes={settings.menu_graph_nodes || []}
+          rootNodeId={settings.menu_graph_root_node_id || "MENU_ROOT"}
+          onChange={(updatedNodes, updatedRootId) => {
+            setSettings((s) => ({
+              ...s,
+              menu_graph_nodes: updatedNodes,
+              menu_graph_root_node_id: updatedRootId,
+            }));
+          }}
+          onSaved={() => {
+            setSaved(true);
+            setTimeout(() => setSaved(false), 3000);
+          }}
+        />
+      )}
+
+      {/* Tab 3: Web Widget Configuration */}
+      {activeTab === "web_config" && (
+        <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-6">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🌐</span>
+              <h2 className="text-lg font-semibold text-gray-900">Web Widget &amp; Integration Script</h2>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Configure embed settings and copy the light JavaScript script tag for your web application.
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Backend API Domain URL
+              </label>
+              <input
+                value={backendUrl}
+                onChange={(e) => setBackendUrl(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono"
+                placeholder="https://your-backend.onrender.com"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Production Script Embed Code
+              </label>
+              <p className="mb-2 text-xs text-gray-400">
+                Paste this script snippet before the closing <code>&lt;/body&gt;</code> tag of your HTML.
+              </p>
+              <div className="relative">
+                <pre className="overflow-x-auto rounded-xl bg-gray-900 p-4 text-xs font-mono text-emerald-400">
+                  {widgetCode}
+                </pre>
+                <button
+                  onClick={copyCode}
+                  className="absolute right-3 top-3 rounded-md bg-gray-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-600 transition"
+                >
+                  {copied ? "Copied!" : "📋 Copy Code"}
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4 space-y-2">
+              <h3 className="text-xs font-bold text-blue-900 uppercase tracking-wider">Web Application Features:</h3>
+              <ul className="list-disc pl-5 text-xs text-blue-800 space-y-1">
+                <li>Option buttons rendered as clean UI button groups / chips.</li>
+                <li>Bypasses WhatsApp media image attachments for lightweight payload delivery.</li>
+                <li>Allows unconstrained long-form text and markdown.</li>
+                <li>Socket sequence deduplication for client web sessions.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tab 4: WhatsApp & Channels Credentials */}
+      {activeTab === "channels" && (
+        <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-6">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xl">💬</span>
+              <h2 className="text-lg font-semibold text-gray-900">WhatsApp &amp; Channel Integrations</h2>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Configure credentials for WhatsApp Cloud API and active external messaging channels.
+            </p>
+          </div>
+
+          <div className="space-y-6">
+            {/* WhatsApp Webhook Endpoint Info */}
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-2">
+              <h3 className="text-xs font-bold text-emerald-900 uppercase tracking-wider">WhatsApp Cloud API Webhook URL:</h3>
+              <p className="font-mono text-xs text-emerald-800 bg-white p-2 rounded border border-emerald-200 select-all">
+                {`${backendUrl}/api/adapters/whatsapp/webhook`}
+              </p>
+            </div>
+
+            {setups.filter(s => s.enabled && s.channel !== "widget" && s.channel !== "web_api").length > 0 ? (
+              setups.filter(s => s.enabled && s.channel !== "widget" && s.channel !== "web_api").map(setup => (
+                <div key={setup.channel} className="rounded-xl border border-gray-200 p-5 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">{setup.emoji}</span>
+                    <h3 className="font-semibold text-gray-800">{setup.label} Configuration</h3>
+                  </div>
+
+                  {setupConfigs[setup.channel] ? (
+                    <div className="space-y-4">
+                      {setup.channel === "whatsapp" && (
+                        <>
+                          <div>
+                            <label className="mb-1 block text-sm font-medium text-gray-700">Phone Number ID</label>
+                            <input
+                              type="text"
+                              value={setupConfigs[setup.channel].phone_number_id || ""}
+                              onChange={(e) => setSetupConfigs(prev => ({ ...prev, [setup.channel]: { ...prev[setup.channel], phone_number_id: e.target.value } }))}
+                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono"
+                              placeholder="e.g. 109827364512398"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-sm font-medium text-gray-700">Meta Access Token</label>
+                            <input
+                              type="password"
+                              value={setupConfigs[setup.channel].access_token || ""}
+                              onChange={(e) => setSetupConfigs(prev => ({ ...prev, [setup.channel]: { ...prev[setup.channel], access_token: e.target.value } }))}
+                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono"
+                              placeholder={setupConfigs[setup.channel].access_token === "••••••••••••••••" ? "••••••••••••••••" : "EAAG..."}
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-sm font-medium text-gray-700">Webhook Verify Token</label>
+                            <input
+                              type="password"
+                              value={setupConfigs[setup.channel].verify_token || ""}
+                              onChange={(e) => setSetupConfigs(prev => ({ ...prev, [setup.channel]: { ...prev[setup.channel], verify_token: e.target.value } }))}
+                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono"
+                              placeholder={setupConfigs[setup.channel].verify_token === "••••••••••••••••" ? "••••••••••••••••" : "custom_verify_token"}
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      {setup.channel !== "whatsapp" && Object.keys(setupConfigs[setup.channel]).map(key => {
+                        if (["enabled", "rate_limit_rpm", "rate_limit_rpd", "max_queries_per_session"].includes(key)) return null;
+                        return (
+                          <div key={key}>
+                            <label className="mb-1 block text-sm font-medium text-gray-700">{key.replace(/_/g, ' ').toUpperCase()}</label>
+                            <input
+                              type="text"
+                              value={setupConfigs[setup.channel][key] || ""}
+                              onChange={(e) => setSetupConfigs(prev => ({ ...prev, [setup.channel]: { ...prev[setup.channel], [key]: e.target.value } }))}
+                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                            />
+                          </div>
+                        );
+                      })}
+
+                      <button
+                        onClick={() => saveIntegrationConfig(setup.channel)}
+                        disabled={savingSetups[setup.channel]}
+                        className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {savingSetups[setup.channel] ? "Saving..." : `Save ${setup.label} Configuration`}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="animate-pulse flex h-12 w-full bg-gray-100 rounded-lg"></div>
+                  )}
+                </div>
+              ))
+            ) : (
+              <div className="rounded-xl border border-dashed border-gray-300 p-6 text-center text-xs text-gray-500">
+                No third-party channels currently active. Enable channels under Institution Setups to configure credentials.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
