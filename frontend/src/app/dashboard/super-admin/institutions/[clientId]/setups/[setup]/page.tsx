@@ -381,9 +381,8 @@ function ContextualImagesSection({ cfg, editable, onSave }: {
                     disabled={!editable}
                     className={inputCls}
                   >
-                    <option value="on_intent">On Intent / Context Match</option>
-                    <option value="only_once">Only Once per Session</option>
-                    <option value="always">Always Include</option>
+                    <option value="on_intent">Trigger on Context / Intent Match</option>
+                    <option value="only_once">Display Once per Session</option>
                   </select>
                 </div>
               </div>

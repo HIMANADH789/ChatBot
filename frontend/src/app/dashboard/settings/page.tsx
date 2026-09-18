@@ -95,7 +95,7 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"persona" | "menu_graph" | "web_config" | "channels">("persona");
+  const [activeTab, setActiveTab] = useState<"persona" | "menu_graph" | "context_images" | "web_config" | "channels">("persona");
 
   const [settings, setSettings] = useState<ClientSettings>(DEFAULTS);
   const [setups, setSetups] = useState<any[]>([]);
@@ -230,6 +230,17 @@ export default function SettingsPage() {
           }`}
         >
           <span>⚡</span> Menu Graph State Machine
+        </button>
+
+        <button
+          onClick={() => setActiveTab("context_images")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
+            activeTab === "context_images"
+              ? "bg-blue-600 text-white shadow-sm"
+              : "bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200"
+          }`}
+        >
+          <span>🖼️</span> Context Images &amp; Media
         </button>
 
         <button
@@ -472,7 +483,179 @@ export default function SettingsPage() {
         />
       )}
 
-      {/* Tab 3: Web Widget Configuration */}
+      {/* Tab 3: Context Images & Media Registry */}
+      {activeTab === "context_images" && (
+        <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🖼️</span>
+                <h2 className="text-lg font-semibold text-gray-900">Context Images &amp; Media Registry</h2>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Attach images (brochures, fee charts, campus maps) that automatically send when user context/intent matches, or once per session.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                const newImg: ContextImage = {
+                  id: crypto.randomUUID(),
+                  title: "New Context Image",
+                  image_path: "https://example.com/image.jpg",
+                  descriptor_tag: "When user asks about course fees, brochure, or campus details",
+                  caption: "Official Program Brochure & Details",
+                  frequency: "on_intent",
+                };
+                setSettings(s => ({
+                  ...s,
+                  context_images: [...(s.context_images || []), newImg]
+                }));
+              }}
+              className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 transition"
+            >
+              <span>+</span> Add Context Image
+            </button>
+          </div>
+
+          <div className="rounded-xl bg-indigo-50/60 border border-indigo-100 p-4 text-xs text-indigo-950 space-y-1.5">
+            <p className="font-semibold text-indigo-900">💡 Context Delivery Rules:</p>
+            <p>• <strong>Trigger on Context / Intent Match (<code className="bg-indigo-100 px-1 rounded font-mono">on_intent</code>):</strong> Evaluates the user query against the trigger descriptor tag. If it matches, the assistant includes this image in the response.</p>
+            <p>• <strong>Display Once per Session (<code className="bg-indigo-100 px-1 rounded font-mono">only_once</code>):</strong> Sends the image the first time intent matches during a session, suppressing repeat sends for the rest of the conversation.</p>
+          </div>
+
+          <div className="space-y-4">
+            {(!settings.context_images || settings.context_images.length === 0) ? (
+              <div className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">
+                No context images configured. Click &quot;Add Context Image&quot; above to add one.
+              </div>
+            ) : (
+              settings.context_images.map((img, idx) => (
+                <div key={img.id || idx} className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                      Context Image #{idx + 1}
+                    </span>
+                    <button
+                      onClick={() => {
+                        const updated = (settings.context_images || []).filter((_, i) => i !== idx);
+                        setSettings(s => ({ ...s, context_images: updated }));
+                      }}
+                      className="text-xs text-red-500 hover:text-red-700 font-medium hover:underline"
+                    >
+                      Delete Image
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                        Image Title
+                      </label>
+                      <input
+                        type="text"
+                        value={img.title || ""}
+                        onChange={(e) => {
+                          const next = [...(settings.context_images || [])];
+                          next[idx] = { ...img, title: e.target.value };
+                          setSettings(s => ({ ...s, context_images: next }));
+                        }}
+                        placeholder="e.g. Fee Structure Chart"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                        Image Path or Public URL
+                      </label>
+                      <input
+                        type="text"
+                        value={img.image_path || ""}
+                        onChange={(e) => {
+                          const next = [...(settings.context_images || [])];
+                          next[idx] = { ...img, image_path: e.target.value };
+                          setSettings(s => ({ ...s, context_images: next }));
+                        }}
+                        placeholder="e.g. https://example.com/fees.png or /images/brochure.jpg"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs font-mono focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 border-t border-gray-100 pt-3">
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                        🏷️ Trigger Context / Intent Descriptor Tag
+                      </label>
+                      <input
+                        type="text"
+                        value={img.descriptor_tag || ""}
+                        onChange={(e) => {
+                          const next = [...(settings.context_images || [])];
+                          next[idx] = { ...img, descriptor_tag: e.target.value };
+                          setSettings(s => ({ ...s, context_images: next }));
+                        }}
+                        placeholder="e.g. When user asks about course fee structure, payment schedule, or eligibility"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                        Send Frequency
+                      </label>
+                      <select
+                        value={img.frequency || "on_intent"}
+                        onChange={(e) => {
+                          const next = [...(settings.context_images || [])];
+                          next[idx] = { ...img, frequency: e.target.value };
+                          setSettings(s => ({ ...s, context_images: next }));
+                        }}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
+                      >
+                        <option value="on_intent">Trigger on Context / Intent Match</option>
+                        <option value="only_once">Display Once per Session</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                      Image Caption (optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={img.caption || ""}
+                      onChange={(e) => {
+                        const next = [...(settings.context_images || [])];
+                        next[idx] = { ...img, caption: e.target.value };
+                        setSettings(s => ({ ...s, context_images: next }));
+                      }}
+                      placeholder="e.g. Complete SV Professional Fee Breakdown Chart"
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {error && <p className="text-sm text-red-600">{error}</p>}
+
+          <div className="flex items-center gap-3 pt-2">
+            <button
+              onClick={saveSettings}
+              disabled={saving}
+              className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? "Saving..." : "Save Context Images Settings"}
+            </button>
+            {saved && <span className="text-sm text-green-600">Context Images Saved!</span>}
+          </div>
+        </div>
+      )}
+
+      {/* Tab 4: Web Widget Configuration */}
       {activeTab === "web_config" && (
         <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-6">
           <div>

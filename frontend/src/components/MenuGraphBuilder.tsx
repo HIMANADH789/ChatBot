@@ -73,7 +73,7 @@ export function MenuGraphBuilder({
           rag_prompt: `Provide full details regarding Menu Option ${seq}`,
         },
       ],
-      frequency: "always",
+      frequency: "on_intent",
     };
     const updated = [...nodes, newNode];
     const newRoot = nodes.length === 0 ? newNodeId : rootNodeId;
@@ -427,14 +427,13 @@ export function MenuGraphBuilder({
                       value={activeNode.frequency || "on_intent"}
                       onChange={(e) =>
                         handleUpdateActiveNode({
-                          frequency: e.target.value as "always" | "only_once" | "on_intent",
+                          frequency: e.target.value as "only_once" | "on_intent",
                         })
                       }
                       className="rounded border border-indigo-300 bg-white px-2 py-0.5 text-xs font-medium text-indigo-900 focus:outline-none"
                     >
-                      <option value="on_intent">On Intent / Context Match</option>
+                      <option value="on_intent">Trigger on Context / Intent Match</option>
                       <option value="only_once">Display Once per Session</option>
-                      <option value="always">Always Display on Match</option>
                     </select>
                   </div>
                 </div>
