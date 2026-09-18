@@ -4,7 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import type { MenuNode, ContextImage, DescriptiveRule, CompiledProfile } from "@/types";
+import type { MenuNode, ContextImage, DescriptiveRule, CompiledProfile, MenuGraphNode } from "@/types";
+import { MenuGraphBuilder } from "@/components/MenuGraphBuilder";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -202,276 +203,38 @@ function ContextAdaptiveRAGSection({ cfg, editable, onSave }: {
   );
 }
 
-// ── Recursive Menu Tree Item Component ────────────────────────────────────
-function MenuNodeItem({
-  node,
-  depth = 0,
+// ── Menu Graph State Machine Section ─────────────────────────────────────────
+function MenuGraphBuilderSection({
+  cfg,
+  clientId,
   editable,
-  onUpdate,
-  onRemove,
-  onAddChild,
+  onSave,
 }: {
-  node: MenuNode;
-  depth?: number;
-  editable: boolean;
-  onUpdate: (updated: MenuNode) => void;
-  onRemove: () => void;
-  onAddChild: () => void;
-}) {
-  const isLeaf = depth >= 1 || (!node.children || node.children.length === 0);
-
-  return (
-    <div className={`rounded-xl border ${depth === 0 ? "border-gray-200 bg-white" : "border-blue-100 bg-blue-50/40"} p-4 space-y-3`}>
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span className={`text-xs font-bold px-2.5 py-0.5 rounded ${depth === 0 ? "bg-blue-100 text-blue-800" : "bg-indigo-100 text-indigo-800"}`}>
-            {depth === 0 ? "Level 1: Root Topic" : "Level 2: Sub-menu Question"}
-          </span>
-          <span className="text-xs text-gray-500 font-mono">
-            {depth === 0 ? `📂 Root (${node.children?.length || 0} sub-questions)` : "🎯 Leaf Question (Feeds RAG)"}
-          </span>
-        </div>
-        {editable && (
-          <div className="flex items-center gap-2">
-            {depth === 0 && (
-              <button
-                onClick={onAddChild}
-                className="text-xs text-blue-600 hover:text-blue-800 font-medium hover:underline"
-              >
-                + Add Sub-menu Question
-              </button>
-            )}
-            <button
-              onClick={onRemove}
-              className="text-xs text-red-500 hover:text-red-700 font-medium hover:underline ml-2"
-            >
-              Delete
-            </button>
-          </div>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">
-            {depth === 0 ? "Root Topic Label" : "Sub-menu Question Title"} <span className="text-gray-400 font-normal">(Button / List text, max 24 chars)</span>
-          </label>
-          <input
-            type="text"
-            value={node.label || ""}
-            onChange={(e) => onUpdate({ ...node, label: e.target.value })}
-            disabled={!editable}
-            placeholder={depth === 0 ? "e.g., Commerce Programs" : "e.g., CA Course Details"}
-            maxLength={24}
-            className={inputCls}
-          />
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">
-            Subtitle / Description <span className="text-gray-400 font-normal">(optional description)</span>
-          </label>
-          <input
-            type="text"
-            value={node.description || ""}
-            onChange={(e) => onUpdate({ ...node, description: e.target.value })}
-            disabled={!editable}
-            placeholder="e.g., Foundation, Intermediate & eligibility"
-            maxLength={72}
-            className={inputCls}
-          />
-        </div>
-      </div>
-
-      {depth === 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 border-t border-gray-100 pt-3">
-          <div className="md:col-span-2">
-            <label className="block text-xs font-medium text-gray-700 mb-1">
-              🏷️ Descriptor Tag / Trigger Condition <span className="text-gray-400 font-normal">(When to offer this menu)</span>
-            </label>
-            <input
-              type="text"
-              value={node.descriptor_tag || ""}
-              onChange={(e) => onUpdate({ ...node, descriptor_tag: e.target.value })}
-              disabled={!editable}
-              placeholder="e.g., When user asks about courses, coaching, or career guidance"
-              className={`${inputCls} text-xs`}
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">
-              Trigger Frequency
-            </label>
-            <select
-              value={node.frequency || "on_intent"}
-              onChange={(e) => onUpdate({ ...node, frequency: e.target.value })}
-              disabled={!editable}
-              className={inputCls}
-            >
-              <option value="on_intent">On Intent / Adaptive</option>
-              <option value="only_once">Only Once per Session</option>
-              <option value="always">Always Trigger</option>
-            </select>
-          </div>
-        </div>
-      )}
-
-      {depth >= 1 && (
-        <div className="border-t border-blue-200/60 pt-3">
-          <label className="block text-xs font-semibold text-indigo-950 mb-1">
-            🎯 Sub-menu Question Sent to RAG Pipeline <span className="text-gray-500 font-normal">(Full detailed question fed to AI)</span>
-          </label>
-          <textarea
-            rows={2}
-            value={node.action_question || ""}
-            onChange={(e) => onUpdate({ ...node, action_question: e.target.value })}
-            disabled={!editable}
-            placeholder="e.g., What are the complete details about the CA course at SV Professional Institute including Foundation, Intermediate, and eligibility?"
-            className={`${inputCls} text-xs font-sans`}
-          />
-        </div>
-      )}
-
-      {/* Render Level 2 children */}
-      {depth === 0 && node.children && node.children.length > 0 && (
-        <div className="pl-4 border-l-2 border-blue-300/60 space-y-3 mt-3">
-          {node.children.map((child, idx) => (
-            <MenuNodeItem
-              key={child.id || idx}
-              node={child}
-              depth={1}
-              editable={editable}
-              onUpdate={(updatedChild) => {
-                const newChildren = [...(node.children || [])];
-                newChildren[idx] = updatedChild;
-                onUpdate({ ...node, children: newChildren });
-              }}
-              onRemove={() => {
-                const newChildren = (node.children || []).filter((_, i) => i !== idx);
-                onUpdate({ ...node, children: newChildren });
-              }}
-              onAddChild={() => {}}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Hierarchical Menu Section ─────────────────────────────────────────────────
-function HierarchicalMenuSection({ cfg, editable, onSave }: {
   cfg: Record<string, unknown>;
+  clientId: string;
   editable: boolean;
   onSave: (fields: Record<string, unknown>) => Promise<void>;
 }) {
-  const [menuTree, setMenuTree] = useState<MenuNode[]>(() => {
-    const raw = (cfg.menu_tree as MenuNode[]) || [];
-    return Array.isArray(raw) ? raw : [];
-  });
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState("");
-
-  function addRootOption() {
-    const newRoot: MenuNode = {
-      id: crypto.randomUUID(),
-      label: "New Menu Option",
-      description: "",
-      descriptor_tag: "",
-      frequency: "on_intent",
-      action_question: "",
-      children: [],
-    };
-    setMenuTree([...menuTree, newRoot]);
-  }
-
-  async function save() {
-    setSaving(true);
-    setError("");
-    setSaved(false);
-    try {
-      await onSave({ menu_tree: menuTree });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save menu tree");
-    } finally {
-      setSaving(false);
-    }
-  }
+  const initialNodes = Array.isArray(cfg.menu_graph_nodes)
+    ? (cfg.menu_graph_nodes as MenuGraphNode[])
+    : [];
+  const rootNodeId = (cfg.menu_graph_root_node_id as string) || "MENU_ROOT";
 
   return (
-    <Section title="🌳 Hierarchical Interactive Menus & Sub-Menus (WhatsApp / Widget)">
-      <div className="rounded-lg bg-blue-50 border border-blue-100 p-3.5 text-xs text-blue-900 space-y-1">
-        <p className="font-semibold text-blue-950">How Menu Trees Work:</p>
-        <p>• <strong>Root Option with Descriptor Tag:</strong> The bot contextually serves the menu when the user inquiry matches the descriptor tag.</p>
-        <p>• <strong>Branch Sub-Options:</strong> Tapping a branch opens the next level of sub-options (via WhatsApp Interactive Buttons or Lists).</p>
-        <p>• <strong>Leaf Action Question:</strong> Tapping a leaf sends the full expanded question directly to the RAG pipeline for an official answer.</p>
-      </div>
-
-      <div className="space-y-4">
-        {menuTree.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">
-            No interactive menu options configured yet. Click below to add a root option.
-          </div>
-        ) : (
-          menuTree.map((rootNode, idx) => (
-            <MenuNodeItem
-              key={rootNode.id || idx}
-              node={rootNode}
-              depth={0}
-              editable={editable}
-              onUpdate={(updated) => {
-                const next = [...menuTree];
-                next[idx] = updated;
-                setMenuTree(next);
-              }}
-              onRemove={() => {
-                setMenuTree(menuTree.filter((_, i) => i !== idx));
-              }}
-              onAddChild={() => {
-                const newChild: MenuNode = {
-                  id: crypto.randomUUID(),
-                  label: "Sub-Option",
-                  description: "",
-                  descriptor_tag: "",
-                  frequency: "on_intent",
-                  action_question: "",
-                  children: [],
-                };
-                const next = [...menuTree];
-                next[idx] = {
-                  ...rootNode,
-                  children: [...(rootNode.children || []), newChild],
-                };
-                setMenuTree(next);
-              }}
-            />
-          ))
-        )}
-      </div>
-
-      {editable && (
-        <div className="flex items-center gap-3 pt-2">
-          <button
-            onClick={addRootOption}
-            className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            + Add Root Menu Option
-          </button>
-          <button
-            onClick={save}
-            disabled={saving}
-            className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 ml-auto"
-          >
-            {saving ? "Saving…" : "Save Menus"}
-          </button>
-          {saved && <span className="text-xs font-medium text-green-600">✓ Menus Saved</span>}
-          {error && <span className="text-xs text-red-600">{error}</span>}
-        </div>
-      )}
+    <Section title="⚡ Dynamic Menu Graph State Machine">
+      <MenuGraphBuilder
+        clientId={clientId}
+        nodes={initialNodes}
+        rootNodeId={rootNodeId}
+        onChange={(updatedNodes, updatedRootId) => {
+          if (editable) {
+            onSave({
+              menu_graph_nodes: updatedNodes,
+              menu_graph_root_node_id: updatedRootId,
+            });
+          }
+        }}
+      />
     </Section>
   );
 }
@@ -1518,8 +1281,8 @@ export default function SetupConfigPage() {
       {/* Context-Adaptive RAG & Context Carrying — all setups */}
       <ContextAdaptiveRAGSection cfg={cfg} editable={editable} onSave={saveConfig} />
 
-      {/* Hierarchical Interactive Menus & Sub-Menus */}
-      <HierarchicalMenuSection cfg={cfg} editable={editable} onSave={saveConfig} />
+      {/* Dynamic Menu Graph State Machine */}
+      <MenuGraphBuilderSection cfg={cfg} clientId={clientId} editable={editable} onSave={saveConfig} />
 
       {/* Contextual Images & Media Delivery */}
       <ContextualImagesSection cfg={cfg} editable={editable} onSave={saveConfig} />
