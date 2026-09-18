@@ -413,59 +413,46 @@ export function MenuGraphBuilder({
                 />
               </div>
 
-              {/* WhatsApp Media & Frequency Panel */}
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3.5 space-y-3">
+              {/* Context Trigger & Frequency Rules Panel */}
+              <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3.5 space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-900">
-                    <span>📱</span> WhatsApp Media Header
+                  <span className="flex items-center gap-1.5 text-xs font-bold text-indigo-900">
+                    <span>🎯</span> Context Trigger Condition &amp; Delivery Rule
                   </span>
                   <div className="flex items-center gap-1.5">
-                    <label className="text-[11px] font-medium text-emerald-800">
+                    <label className="text-[11px] font-medium text-indigo-800">
                       Frequency:
                     </label>
                     <select
-                      value={activeNode.frequency || "always"}
+                      value={activeNode.frequency || "on_intent"}
                       onChange={(e) =>
                         handleUpdateActiveNode({
-                          frequency: e.target.value as "always" | "only_once",
+                          frequency: e.target.value as "always" | "only_once" | "on_intent",
                         })
                       }
-                      className="rounded border border-emerald-300 bg-white px-2 py-0.5 text-xs font-medium text-emerald-900 focus:outline-none"
+                      className="rounded border border-indigo-300 bg-white px-2 py-0.5 text-xs font-medium text-indigo-900 focus:outline-none"
                     >
-                      <option value="always">Always Display</option>
+                      <option value="on_intent">On Intent / Context Match</option>
                       <option value="only_once">Display Once per Session</option>
+                      <option value="always">Always Display on Match</option>
                     </select>
                   </div>
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-1">
+                  <label className="block text-[10px] font-semibold text-indigo-800">
+                    Trigger Context / Intent Descriptor Tag
+                  </label>
                   <input
                     type="text"
-                    value={activeNode.whatsapp_media?.image_url || ""}
+                    value={(activeNode as any).descriptor_tag || ""}
                     onChange={(e) =>
                       handleUpdateActiveNode({
-                        whatsapp_media: {
-                          ...activeNode.whatsapp_media,
-                          image_url: e.target.value.trim(),
-                        },
-                      })
+                        descriptor_tag: e.target.value,
+                      } as any)
                     }
-                    placeholder="Image URL (e.g. https://cdn.institution.edu/banner.jpg)"
-                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-xs focus:border-emerald-500 focus:outline-none"
-                  />
-                  <input
-                    type="text"
-                    value={activeNode.whatsapp_media?.caption || ""}
-                    onChange={(e) =>
-                      handleUpdateActiveNode({
-                        whatsapp_media: {
-                          ...activeNode.whatsapp_media,
-                          caption: e.target.value,
-                        },
-                      })
-                    }
-                    placeholder="Optional image caption"
-                    className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
+                    placeholder="e.g. Trigger on session start OR when user asks for course options / coaching details"
+                    className="w-full rounded-lg border border-indigo-200 bg-white px-2.5 py-1.5 text-xs text-indigo-950 focus:border-indigo-500 focus:outline-none"
                   />
                 </div>
               </div>

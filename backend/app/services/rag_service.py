@@ -52,6 +52,35 @@ CONVERSATIONAL_TRIGGERS = {
     "what can you do", "help", "who are you", "what are you",
 }
 
+NON_NAME_WORDS = {
+    "a", "an", "the", "here", "there", "ready", "new", "student", "interested",
+    "looking", "going", "trying", "asking", "wondering", "writing", "calling",
+    "fine", "good", "okay", "ok", "happy", "sure", "sorry", "just", "also",
+}
+
+STOP_AFTER_WORDS = {"from", "in", "at", "and", "with", "for", "here", "to", "who", "seeking", "wanting"}
+
+def extract_user_name(text: str) -> Optional[str]:
+    if not text:
+        return None
+    patterns = [
+        r"\b(?:my name is|i am|i'm|this is|call me)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)\b",
+    ]
+    for pat in patterns:
+        match = re.search(pat, text, re.IGNORECASE)
+        if match:
+            candidate = match.group(1).strip()
+            parts = candidate.split()
+            valid_parts = []
+            for p in parts:
+                if p.lower() in STOP_AFTER_WORDS or p.lower() in NON_NAME_WORDS:
+                    break
+                if len(p) >= 2:
+                    valid_parts.append(p.title())
+            if valid_parts:
+                return " ".join(valid_parts)
+    return None
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -698,6 +727,17 @@ async def query(
     raw_cap = ctx_cfg.get("capacity") if ctx_cfg.get("capacity") is not None else cs.get("context_capacity")
     context_capacity = int(raw_cap) if raw_cap is not None else 4
 
+    # Extract dynamic user name from introduction patterns (e.g. "I am Tarun", "my name is Amit")
+    extracted_name = extract_user_name(message)
+    if context_variables is None:
+        context_variables = {}
+    if extracted_name:
+        context_variables["user_name"] = extracted_name
+
+    active_name = context_variables.get("user_name") or extracted_name
+    if active_name:
+        system_prompt += f"\n\nMANDATORY VISITOR IDENTITY INSTRUCTION:\n- Visitor's active name is '{active_name}'. Always address them warmly as '{active_name}' in your response."
+
     # If context is disabled ("none") or context capacity is 0, operate completely stateless
     if context_mode == "none" or context_capacity <= 0:
         max_history = 0
@@ -722,16 +762,23 @@ async def query(
     history_text = _build_history_text(history)
 
     # Conversational shortcut — no retrieval
-    if _is_conversational(message):
+    if _is_conversational(message) or (extracted_name and len(message.split()) <= 6):
         await _rate_limiter.acquire()
-        conv_prompt = f"{history_text}\nUser: {message}\n\nRespond directly as a friendly front desk assistant in 1-2 sentences."
-        llm_response = await llm.generate(conv_prompt, system_prompt=system_prompt, temperature=0.4, max_tokens=256)
-        text = _clean_markdown(llm_response.text)
+        if extracted_name:
+            text = f"Hello {extracted_name}! What would you like to explore about our institution today?"
+            model_name = "identity_parser"
+            usage_stats = {}
+        else:
+            conv_prompt = f"{history_text}\nUser: {message}\n\nRespond directly as a friendly front desk assistant in 1-2 sentences."
+            llm_response = await llm.generate(conv_prompt, system_prompt=system_prompt, temperature=0.4, max_tokens=256)
+            text = _clean_markdown(llm_response.text)
+            model_name = llm_response.model
+            usage_stats = llm_response.usage
         if not text or len(text.strip()) == 0:
             text = "Hello! How can I assist you today?"
         await add_message(session_id, "assistant", text)
         response_time = int((time.time() - start) * 1000)
-        await _log_query(client_id, session_id, message, text, [], response_time, llm_response.model, llm_response.usage, channel=channel)
+        await _log_query(client_id, session_id, message, text, [], response_time, model_name, usage_stats, channel=channel)
 
         from app.services.context_media_service import (
             evaluate_menu_triggers,
@@ -899,6 +946,17 @@ async def query_stream(
     raw_cap = ctx_cfg.get("capacity") if ctx_cfg.get("capacity") is not None else cs.get("context_capacity")
     context_capacity = int(raw_cap) if raw_cap is not None else 4
 
+    # Extract dynamic user name from introduction patterns (e.g. "I am Tarun", "my name is Amit")
+    extracted_name = extract_user_name(message)
+    if context_variables is None:
+        context_variables = {}
+    if extracted_name:
+        context_variables["user_name"] = extracted_name
+
+    active_name = context_variables.get("user_name") or extracted_name
+    if active_name:
+        system_prompt += f"\n\nMANDATORY VISITOR IDENTITY INSTRUCTION:\n- Visitor's active name is '{active_name}'. Always address them warmly as '{active_name}' in your response."
+
     # If context is disabled ("none") or context capacity is 0, operate completely stateless
     if context_mode == "none" or context_capacity <= 0:
         max_history = 0
@@ -925,21 +983,27 @@ async def query_stream(
     history_text = _build_history_text(history)
 
     # Conversational shortcut
-    if _is_conversational(message):
+    if _is_conversational(message) or (extracted_name and len(message.split()) <= 6):
         await _rate_limiter.acquire()
-        conv_prompt = f"{history_text}\nUser: {message}\n\nRespond directly as a friendly front desk assistant in 1-2 sentences."
         full_text = ""
-        raw_gen = llm.generate_stream(conv_prompt, system_prompt=system_prompt, temperature=0.4, max_tokens=256)
-        async for chunk in _filter_thinking_stream(raw_gen):
-            full_text += chunk
-            yield {"type": "token", "text": chunk}
-        full_text = _clean_markdown(full_text)
-        if not full_text:
-            full_text = "Hello! How can I assist you today?"
+        model_name = "identity_parser"
+        if extracted_name:
+            full_text = f"Hello {extracted_name}! What would you like to explore about our institution today?"
             yield {"type": "token", "text": full_text}
+        else:
+            conv_prompt = f"{history_text}\nUser: {message}\n\nRespond directly as a friendly front desk assistant in 1-2 sentences."
+            raw_gen = llm.generate_stream(conv_prompt, system_prompt=system_prompt, temperature=0.4, max_tokens=256)
+            async for chunk in _filter_thinking_stream(raw_gen):
+                full_text += chunk
+                yield {"type": "token", "text": chunk}
+            full_text = _clean_markdown(full_text)
+            model_name = llm.get_model_name()
+            if not full_text:
+                full_text = "Hello! How can I assist you today?"
+                yield {"type": "token", "text": full_text}
         await add_message(session_id, "assistant", full_text)
         response_time = int((time.time() - start) * 1000)
-        await _log_query(client_id, session_id, message, full_text, [], response_time, llm.get_model_name(), {}, channel=channel)
+        await _log_query(client_id, session_id, message, full_text, [], response_time, model_name, {}, channel=channel)
 
         from app.services.context_media_service import (
             evaluate_menu_triggers,
