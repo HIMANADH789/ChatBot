@@ -125,56 +125,86 @@ async def evaluate_menu_triggers(
     llm: LLMProvider,
 ) -> Optional[dict]:
     """
-    Evaluate if any root menu option's descriptor_tag matches the query/context.
-    Enforces frequency ('only_once' | 'always' | 'on_intent').
+    Evaluate if any menu option's descriptor_tag directive matches the current query and state context.
+    Directives in descriptor_tag (e.g. "at start of conversation", "once per session", "on explicit request")
+    are dynamically evaluated by the state machine and LLM evaluator.
     """
     if not menu_tree or not query:
         return None
 
-    query_lower = query.lower()
-
-    # If user explicitly asks for menus or options
-    explicit_request = any(k in query_lower for k in ("menu", "options", "courses list", "programs list", "show options", "what can you do", "main menu"))
+    query_lower = query.lower().strip()
+    is_start_or_greeting = (not history or len(history) <= 1) or any(
+        g in query_lower for g in ("hello", "hi", "hey", "greetings", "good morning", "good afternoon", "start")
+    )
+    is_explicit_request = any(
+        k in query_lower for k in (
+            "menu", "options", "courses list", "programs list", "show options",
+            "what can you do", "main menu", "list of courses", "show courses",
+            "courses again", "give me list", "again"
+        )
+    )
 
     for node in menu_tree:
         tag = (node.get("descriptor_tag") or "").strip()
-        node_label = node.get("label", "")
-        node_id = node.get("id", "")
-        freq = node.get("frequency", "on_intent")
+        node_label = (node.get("label") or "").strip()
+        node_id = (node.get("id") or "").strip()
+        was_shown = _was_node_shown_in_history(node_label, history) or _was_node_shown_in_history(node_id, history)
 
-        # Frequency check: only_once
-        if freq == "only_once" and not explicit_request:
-            if _was_node_shown_in_history(node_label, history) or _was_node_shown_in_history(node_id, history):
-                continue
+        tag_lower = tag.lower()
 
-        # Fast direct match on label
-        if node_label.lower() in query_lower:
+        # Directive 1: Start of conversation / greeting directive
+        if is_start_or_greeting and any(k in tag_lower for k in ("start", "greeting", "welcome", "initial", "first turn", "first interaction", "beginning")):
+            logger.info("Menu node '%s' triggered via start of conversation / greeting directive: '%s'", node_label, tag)
             return node
 
-        # If descriptor tag is defined, evaluate match
+        # Directive 2: Explicit re-request (e.g. "can you give me list of courses again")
+        if is_explicit_request and (node_label.lower() in query_lower or any(k in query_lower for k in ("course", "menu", "program", "list", "option"))):
+            logger.info("Menu node '%s' triggered via explicit re-request: '%s'", node_label, query)
+            return node
+
+        # Directive 3: "Once per session" suppression rule (unless explicitly re-requested)
+        if was_shown and any(k in tag_lower for k in ("once", "only once", "first time")) and not is_explicit_request:
+            continue
+
+        # Directive 4: Direct label match in query
+        if node_label and len(node_label) >= 3 and node_label.lower() in query_lower:
+            return node
+
+        # Directive 5: Context / Intent tag matching
         if tag:
-            # Simple keyword overlap heuristic first to save LLM tokens
-            tag_words = [w for w in re.findall(r"\b\w+\b", tag.lower()) if len(w) > 3 and w not in ("when", "user", "asks", "about", "inquires", "inquiry", "info", "information")]
+            # Keyword overlap check
+            stop_words = {
+                "when", "user", "asks", "about", "inquires", "inquiry", "info", "information",
+                "display", "show", "at", "start", "of", "conversation", "or", "initial", "greeting",
+                "explicitly", "give", "can", "you", "me", "is", "it", "for", "the", "a", "an", "and"
+            }
+            tag_words = [w for w in re.findall(r"\b\w+\b", tag_lower) if len(w) > 3 and w not in stop_words]
             query_words = set(re.findall(r"\b\w+\b", query_lower))
             overlap = sum(1 for tw in tag_words if tw in query_words)
             if overlap >= 2 or (len(tag_words) == 1 and overlap == 1):
                 return node
 
-            # If uncertain but query is a substantial inquiry, use LLM for precision
-            if len(query.split()) >= 3 and len(tag_words) > 0:
-                eval_prompt = f"""You are a intent matching assistant for an educational institution.
-Evaluate if the user inquiry matches the menu trigger condition.
+            # LLM Evaluator for natural language prompt directives
+            if len(query.split()) >= 2 and len(tag_words) > 0:
+                eval_prompt = f"""You are an intelligent state machine evaluator for an educational assistant.
+Evaluate whether the menu item "{node_label}" should be triggered for the current user message based on the state machine directive.
 
-User inquiry: "{query}"
-Trigger Condition: "{tag}"
+User Message: "{query}"
+Session State:
+- Start of conversation / greeting: {is_start_or_greeting}
+- Previously shown in session: {was_shown}
+- Explicit request for menu/courses list: {is_explicit_request}
+
+State Machine Directive: "{tag}"
 
 Respond ONLY with YES or NO:"""
                 try:
                     resp = await llm.generate(eval_prompt, temperature=0.0, max_tokens=10)
                     if "yes" in resp.text.lower():
+                        logger.info("Menu node '%s' matched via LLM directive evaluation", node_label)
                         return node
                 except Exception as e:
-                    logger.debug("Menu descriptor eval failed: %s", e)
+                    logger.debug("Menu directive LLM evaluation failed: %s", e)
 
     return None
 
@@ -188,13 +218,21 @@ async def evaluate_image_triggers(
 ) -> list[dict]:
     """
     Evaluate if any configured contextual image should be triggered for this turn.
-    Enforces frequency ('only_once' | 'always' | 'on_intent').
+    Prompt directives in descriptor_tag (e.g. "at start", "once per session", "on fee inquiry")
+    are dynamically evaluated by the state machine and LLM evaluator.
     """
     if not context_images or not query:
         return []
 
-    query_lower = query.lower()
+    query_lower = query.lower().strip()
     norm_query = query_lower.replace("&", "and").replace("/", " ")
+    is_start_or_greeting = (not history or len(history) <= 1) or any(
+        g in query_lower for g in ("hello", "hi", "hey", "greetings", "good morning", "good afternoon", "start")
+    )
+    is_explicit_request = any(
+        k in query_lower for k in ("image", "photo", "chart", "map", "brochure", "diagram", "show", "view", "send")
+    )
+
     matched = []
 
     stop_words = {
@@ -203,32 +241,39 @@ async def evaluate_image_triggers(
         "institute", "professional", "including", "eligibility", "program", "programs",
         "coaching", "training", "academy", "overall", "what", "are", "the", "with", "at", "sv",
         "foundation", "intermediate", "advanced", "and", "or", "for", "in", "on", "of", "to",
-        "is", "it", "by", "from", "an", "a", "as", "also", "can", "you", "give", "me", "tell", "us"
+        "is", "it", "by", "from", "an", "a", "as", "also", "can", "you", "give", "me", "tell", "us",
+        "display", "show"
     }
 
     for img in context_images:
         path = img.get("image_path", "").strip()
         tag = (img.get("descriptor_tag") or "").strip()
         title = (img.get("title") or "").strip()
-        freq = img.get("frequency", "on_intent")
 
         if not path:
             continue
 
-        # Frequency check: only_once
-        if freq == "only_once":
-            if _was_image_shown_in_history(path, history) or _was_image_shown_in_history(title, history):
-                continue
+        was_shown = _was_image_shown_in_history(path, history) or _was_image_shown_in_history(title, history)
+        tag_lower = tag.lower()
 
-        # 1. Direct title check with normalization
+        # Directive 1: "Once per session" suppression rule (unless explicitly requested)
+        if was_shown and any(k in tag_lower for k in ("once", "only once", "first time")) and not is_explicit_request:
+            continue
+
+        # Directive 2: Start of conversation directive
+        if is_start_or_greeting and any(k in tag_lower for k in ("start", "greeting", "welcome", "initial", "first turn", "beginning")):
+            matched.append(img)
+            continue
+
+        # Directive 3: Direct title match in query
         norm_title = title.lower().replace("&", "and").replace("/", " ")
         if norm_title and len(norm_title) >= 2 and norm_title in norm_query:
             matched.append(img)
             continue
 
-        # 2. Descriptor tag match
+        # Directive 4: Descriptor tag keyword overlap
         if tag:
-            norm_tag = tag.lower().replace("&", "and").replace("/", " ")
+            norm_tag = tag_lower.replace("&", "and").replace("/", " ")
             tag_words = set(w for w in re.findall(r"\b\w+\b", norm_tag) if len(w) >= 2 and w not in stop_words)
             query_words = set(re.findall(r"\b\w+\b", norm_query))
             overlap = tag_words.intersection(query_words)
@@ -236,11 +281,15 @@ async def evaluate_image_triggers(
                 matched.append(img)
                 continue
 
-            # LLM Fallback check if tag is complex
-            if len(query.split()) >= 3:
-                eval_prompt = f"""Evaluate if this image should be attached to answer the user's question.
-User question: "{query}"
-Image trigger condition: "{tag}"
+            # LLM Fallback evaluator for complex image prompt directives
+            if len(query.split()) >= 2:
+                eval_prompt = f"""Evaluate if this image should be attached to answer the user message.
+User Message: "{query}"
+Session State:
+- Start of conversation/greeting: {is_start_or_greeting}
+- Image previously shown: {was_shown}
+
+Image Trigger Directive: "{tag}"
 
 Respond ONLY with YES or NO:"""
                 try:
@@ -248,6 +297,6 @@ Respond ONLY with YES or NO:"""
                     if "yes" in resp.text.lower():
                         matched.append(img)
                 except Exception as e:
-                    logger.debug("Image descriptor eval failed: %s", e)
+                    logger.debug("Image directive LLM evaluation failed: %s", e)
 
     return matched

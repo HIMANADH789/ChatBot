@@ -413,29 +413,12 @@ export function MenuGraphBuilder({
                 />
               </div>
 
-              {/* Context Trigger & Frequency Rules Panel */}
-              <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3.5 space-y-3">
+              {/* Context Trigger & State Machine Directive Panel */}
+              <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3.5 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="flex items-center gap-1.5 text-xs font-bold text-indigo-900">
-                    <span>🎯</span> Context Trigger Condition &amp; Delivery Rule
+                    <span>🎯</span> Trigger Context &amp; State Machine Directive
                   </span>
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-[11px] font-medium text-indigo-800">
-                      Frequency:
-                    </label>
-                    <select
-                      value={activeNode.frequency || "on_intent"}
-                      onChange={(e) =>
-                        handleUpdateActiveNode({
-                          frequency: e.target.value as "only_once" | "on_intent",
-                        })
-                      }
-                      className="rounded border border-indigo-300 bg-white px-2 py-0.5 text-xs font-medium text-indigo-900 focus:outline-none"
-                    >
-                      <option value="on_intent">Trigger on Context / Intent Match</option>
-                      <option value="only_once">Display Once per Session</option>
-                    </select>
-                  </div>
                 </div>
 
                 <div className="space-y-1">

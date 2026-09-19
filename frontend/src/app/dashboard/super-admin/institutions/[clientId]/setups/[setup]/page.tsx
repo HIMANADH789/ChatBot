@@ -348,10 +348,10 @@ function ContextualImagesSection({ cfg, editable, onSave }: {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 border-t border-gray-100 pt-3">
-                <div className="md:col-span-2">
+              <div className="border-t border-gray-100 pt-3">
+                <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">
-                    🏷️ Descriptor Tag / Trigger Context <span className="text-gray-400 font-normal">(Condition when to insert this image)</span>
+                    🏷️ Trigger Context &amp; State Directive <span className="text-gray-400 font-normal">(Prompt rule interpreting when &amp; how often to display this image)</span>
                   </label>
                   <input
                     type="text"
@@ -362,28 +362,9 @@ function ContextualImagesSection({ cfg, editable, onSave }: {
                       setImages(next);
                     }}
                     disabled={!editable}
-                    placeholder="e.g., When user asks for campus map, building layout, hostel directions, or parking"
+                    placeholder="e.g., Display at start of conversation, OR once per session when user asks for campus map"
                     className={`${inputCls} text-xs`}
                   />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Send Frequency
-                  </label>
-                  <select
-                    value={img.frequency || "on_intent"}
-                    onChange={(e) => {
-                      const next = [...images];
-                      next[idx] = { ...img, frequency: e.target.value };
-                      setImages(next);
-                    }}
-                    disabled={!editable}
-                    className={inputCls}
-                  >
-                    <option value="on_intent">Trigger on Context / Intent Match</option>
-                    <option value="only_once">Display Once per Session</option>
-                  </select>
                 </div>
               </div>
 

@@ -582,10 +582,10 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 border-t border-gray-100 pt-3">
-                    <div className="md:col-span-2">
+                  <div className="border-t border-gray-100 pt-3">
+                    <div>
                       <label className="block text-xs font-medium text-gray-700 mb-1">
-                        🏷️ Trigger Context / Intent Descriptor Tag
+                        🏷️ Trigger Context &amp; State Directive <span className="text-gray-400 font-normal">(Prompt rule interpreting when &amp; how often to display this image)</span>
                       </label>
                       <input
                         type="text"
@@ -595,27 +595,9 @@ export default function SettingsPage() {
                           next[idx] = { ...img, descriptor_tag: e.target.value };
                           setSettings(s => ({ ...s, context_images: next }));
                         }}
-                        placeholder="e.g. When user asks about course fee structure, payment schedule, or eligibility"
+                        placeholder="e.g. Display at start of conversation, OR once per session when user inquires about fee breakdown / brochure"
                         className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
                       />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">
-                        Send Frequency
-                      </label>
-                      <select
-                        value={img.frequency || "on_intent"}
-                        onChange={(e) => {
-                          const next = [...(settings.context_images || [])];
-                          next[idx] = { ...img, frequency: e.target.value };
-                          setSettings(s => ({ ...s, context_images: next }));
-                        }}
-                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
-                      >
-                        <option value="on_intent">Trigger on Context / Intent Match</option>
-                        <option value="only_once">Display Once per Session</option>
-                      </select>
                     </div>
                   </div>
 

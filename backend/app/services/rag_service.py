@@ -789,6 +789,11 @@ async def query(
         matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm)
         matched_images = await evaluate_image_triggers(message, "", context_imgs, history, llm)
 
+        if matched_menu:
+            label = matched_menu.get("label") or matched_menu.get("title") or "our options"
+            name_prefix = f"Hello {extracted_name}! " if extracted_name else "Hello! "
+            text = f"{name_prefix}Welcome to SV Professional Institute. Here are the available {label.lower()}:"
+
         return {
             "response": text,
             "sources": [],
