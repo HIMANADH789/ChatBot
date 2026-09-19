@@ -105,76 +105,77 @@ class WhatsAppChannelRenderer(BaseChannelRenderer):
         state: UserSessionState,
     ) -> List[BotAction]:
         menu = response.interactive_menu
-        if not menu:
-            return response.actions
-
         actions: List[BotAction] = []
-        options = _extract_menu_options(menu)
-        whatsapp_media = menu.get("whatsapp_media", {})
-        node_id = menu.get("node_id", "") or menu.get("id", "")
-        frequency = menu.get("frequency", "always")
 
-        # ── 1. Frequency-Gated Image Dispatch ───────────────────────────────
-        image_url = whatsapp_media.get("image_url", "")
-        if image_url:
-            should_send_image = True
-            if frequency == FREQ_ONLY_ONCE and node_id and state.was_node_shown(node_id):
-                # Node was already shown; skip the image
-                should_send_image = False
-                logger.debug(
-                    "Skipping WhatsApp image for node %s (only_once, count=%d)",
-                    node_id,
-                    state.get_node_show_count(node_id),
-                )
+        if menu:
+            options = _extract_menu_options(menu)
+            whatsapp_media = menu.get("whatsapp_media", {})
+            node_id = menu.get("node_id", "") or menu.get("id", "")
+            frequency = menu.get("frequency", "always")
 
-            if should_send_image:
-                caption = whatsapp_media.get("caption", "")
-                actions.append(BotAction(
-                    action_type=ActionType.IMAGE_MEDIA,
-                    payload={
-                        "image_url": image_url,
-                        "image_path": image_url,
-                        "caption": caption,
-                        "title": caption,
-                    },
-                ))
+            # ── 1. Frequency-Gated Image Dispatch ───────────────────────────────
+            image_url = whatsapp_media.get("image_url", "")
+            if image_url:
+                should_send_image = True
+                if frequency == FREQ_ONLY_ONCE and node_id and state.was_node_shown(node_id):
+                    # Node was already shown; skip the image
+                    should_send_image = False
+                    logger.debug(
+                        "Skipping WhatsApp image for node %s (only_once, count=%d)",
+                        node_id,
+                        state.get_node_show_count(node_id),
+                    )
 
-        # ── 2. Build Interactive Menu ───────────────────────────────────────
-        # Format options for the WhatsApp adapter
-        wa_options = []
-        for opt in options:
-            wa_options.append({
-                "id": str(opt.get("option_number") or opt.get("id", "")),
-                "label": str(opt.get("button_text") or opt.get("label", "")),
-                "title": str(opt.get("button_text") or opt.get("label", "")),
-                "description": "",
-            })
+                if should_send_image:
+                    caption = whatsapp_media.get("caption", "")
+                    actions.append(BotAction(
+                        action_type=ActionType.IMAGE_MEDIA,
+                        payload={
+                            "image_url": image_url,
+                            "image_path": image_url,
+                            "caption": caption,
+                            "title": caption,
+                        },
+                    ))
 
-        body_text = menu.get("body_text") or menu.get("description") or "Please select an option:"
-        header_text = menu.get("header_text") or menu.get("title") or menu.get("label") or ""
+            # ── 2. Build Interactive Menu ───────────────────────────────────────
+            # Format options for the WhatsApp adapter
+            wa_options = []
+            for opt in options:
+                wa_options.append({
+                    "id": str(opt.get("option_number") or opt.get("id", "")),
+                    "label": str(opt.get("button_text") or opt.get("label", "")),
+                    "title": str(opt.get("button_text") or opt.get("label", "")),
+                    "description": "",
+                })
 
-        # Build the interactive menu action with WhatsApp-specific truncation
-        if len(wa_options) <= 3:
-            # Button reply — truncate to 20 chars
-            for opt in wa_options:
-                opt["label"] = opt["label"][:20]
-                opt["title"] = opt["title"][:20]
+            body_text = menu.get("body_text") or menu.get("description") or "Please select an option:"
+            header_text = menu.get("header_text") or menu.get("title") or menu.get("label") or ""
+
+            # Build the interactive menu action with WhatsApp-specific truncation
+            if len(wa_options) <= 3:
+                # Button reply — truncate to 20 chars
+                for opt in wa_options:
+                    opt["label"] = opt["label"][:20]
+                    opt["title"] = opt["title"][:20]
+            else:
+                # List reply — truncate to 24 chars
+                for opt in wa_options:
+                    opt["label"] = opt["label"][:24]
+                    opt["title"] = opt["title"][:24]
+
+            actions.append(BotAction(
+                action_type=ActionType.INTERACTIVE_MENU,
+                payload={
+                    "body_text": body_text[:1024],
+                    "options": wa_options,
+                    "header_text": header_text[:60] if header_text else "",
+                },
+            ))
         else:
-            # List reply — truncate to 24 chars
-            for opt in wa_options:
-                opt["label"] = opt["label"][:24]
-                opt["title"] = opt["title"][:24]
+            actions = list(response.actions or [])
 
-        actions.append(BotAction(
-            action_type=ActionType.INTERACTIVE_MENU,
-            payload={
-                "body_text": body_text[:1024],
-                "options": wa_options,
-                "header_text": header_text[:60] if header_text else "",
-            },
-        ))
-
-        # Also include any contextual media images matched during RAG
+        # ── 3. Include Contextual Media Images (Always if present) ────────────
         if response.context_images:
             for img in response.context_images:
                 img_path = img.get("image_path") or img.get("image_url", "")

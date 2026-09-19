@@ -93,12 +93,24 @@ def _was_node_shown_in_history(node_id_or_label: str, history: list) -> bool:
 
 def _was_image_shown_in_history(image_id_or_path: str, history: list) -> bool:
     """Check if an image path was already sent in the session history."""
-    if not history:
+    if not history or not image_id_or_path:
         return False
-    target = image_id_or_path.lower()
+    path_clean = image_id_or_path.lower().strip()
+    basename = path_clean.split("/")[-1].split("\\")[-1]
+    if not basename or len(basename) < 4:
+        return False
+
     for msg in history:
+        # Check explicit image metadata on stored message if present
+        msg_images = msg.get("images") or msg.get("context_images") or []
+        for img in msg_images:
+            if isinstance(img, dict):
+                img_p = str(img.get("image_path") or img.get("image_url", "")).lower()
+                if path_clean in img_p or basename in img_p:
+                    return True
+        # Check content ONLY for explicit media link / filename tag
         content = str(msg.get("content", "")).lower()
-        if target in content:
+        if (f"[image:" in content or f"/static/" in content or f"http" in content) and basename in content:
             return True
     return False
 
@@ -125,7 +137,9 @@ async def evaluate_menu_triggers(
         k in query_lower for k in (
             "menu", "options", "courses list", "programs list", "show options",
             "what can you do", "main menu", "list of courses", "show courses",
-            "courses again", "give me list", "again", "course menu"
+            "courses again", "give me list", "again", "course menu", "courses offered",
+            "courses in", "what courses", "tell me about courses", "tell about courses",
+            "courses", "programs offered"
         )
     )
     is_specific_factual_query = any(
@@ -133,18 +147,25 @@ async def evaluate_menu_triggers(
             "fee", "fees", "eligibility", "syllabus", "location", "address",
             "admission process", "installment", "payment", "duration", "timing",
             "dates", "how to apply", "cost", "price", "discount", "requirement",
-            "requirements", "curriculum", "subjects", "topics", "tell about",
-            "tell me about", "explain", "details of", "detail of", "overview of",
-            "what is", "info on", "information about", "describe", "know about",
-            "want to know", "can you tell", "give info", "ca foundation", "ca intermediate",
-            "ca final", "finance & accounting", "human resources", "hr course", "f&a course"
+            "requirements", "curriculum", "subjects", "topics", "explain",
+            "details of", "detail of", "overview of", "ca foundation", "ca intermediate",
+            "ca final", "finance & accounting fee", "human resources fee", "hr course fee", "f&a course fee"
         )
     )
 
-    # Do not trigger full menu navigation if user is asking a specific factual query (unless explicitly requesting menu)
+    # Do not trigger full menu navigation if user is asking a specific detailed query like fee/syllabus (unless explicitly requesting menu)
     if is_specific_factual_query and not is_explicit_request:
         logger.debug("Suppressing menu trigger for specific factual query: %s", query)
         return None
+
+    # First turn / greeting / course inquiry -> deliver root menu if available
+    if (is_start_or_greeting or is_explicit_request) and menu_tree:
+        # Check if any specific node matches first
+        for node in menu_tree:
+            tag = (node.get("descriptor_tag") or "").strip().lower()
+            if any(k in tag for k in ("start", "greeting", "welcome", "initial", "first turn", "beginning")):
+                return node
+        return menu_tree[0]
 
     for node in menu_tree:
         tag = (node.get("descriptor_tag") or "").strip()
