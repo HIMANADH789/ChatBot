@@ -217,12 +217,15 @@ class StateStore:
         await self.save_state(state)
         return prev_node_id
 
-    async def reset_state(self, state: UserSessionState) -> UserSessionState:
-        """Reset state breadcrumbs back to root/initial state while preserving user profile context."""
+    async def reset_state(self, state: UserSessionState, clear_context: bool = False) -> UserSessionState:
+        """Reset state breadcrumbs back to root/initial state."""
         state.current_node_id = None
         state.active_menu_id = None
         state.navigation_stack = []
-        # Preserve node_execution_counts for frequency control across resets
+        if clear_context:
+            state.context_variables = {}
+            state.node_execution_counts = {}
+            state.state_flags = {}
         await self.save_state(state)
         return state
 

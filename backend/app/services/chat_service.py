@@ -61,3 +61,17 @@ async def count_session_queries(session_id: str) -> int:
         return 0
     messages = session.get("messages", [])
     return sum(1 for m in messages if m.get("role") == "user")
+
+
+async def clear_session_history(session_id: str):
+    """Clear all messages from a chat session to completely reload the session."""
+    db = get_db()
+    await db[CHAT_SESSIONS].update_one(
+        {"session_id": session_id},
+        {
+            "$set": {
+                "messages": [],
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+    )

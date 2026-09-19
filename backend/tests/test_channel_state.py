@@ -260,6 +260,37 @@ class TestDynamicStateRefresher(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.context_variables.get("user_name"), "Sarah")
         self.assertEqual(state.context_variables.get("target_course"), "CA Intermediate")
 
+    async def test_session_reload_trigger(self):
+        from app.services.state_store import UserSessionState, state_store
+        from app.services.state_machine import StateMachineRouter
+        from app.core.user_event import UserEvent, EventType
+        from app.core.menu_graph import MenuGraph
+
+        router = StateMachineRouter()
+        state = await state_store.get_state("tenant_test", "whatsapp", "phone_888")
+        state.context_variables["user_name"] = "OldName"
+        state.navigation_stack = ["MENU_ROOT", "MENU_100"]
+
+        nodes = [
+            {
+                "node_id": "MENU_ROOT",
+                "title": "Main Menu",
+                "options": [{"option_number": "1", "button_text": "Courses", "target_type": "NAVIGATE_MENU", "target_id": "MENU_100"}],
+            }
+        ]
+        graph = MenuGraph.from_config(nodes, root_node_id="MENU_ROOT")
+
+        # Send /reset command
+        evt = UserEvent(tenant_id="tenant_test", channel="whatsapp", user_id="phone_888", payload="/reset", event_type=EventType.TEXT)
+        profile = {"menu_graph": graph}
+        res, requires_rag, query_override = await router.evaluate_event(evt, state, profile)
+
+        self.assertIsNotNone(res)
+        self.assertTrue(res.is_deterministic)
+        self.assertIn("Session reloaded", res.interactive_menu.get("body_text", ""))
+        self.assertEqual(state.navigation_stack, [])
+        self.assertEqual(state.context_variables, {})
+
 
 class TestUserSessionState(unittest.TestCase):
     """Test the updated UserSessionState with navigation_stack and execution counts."""

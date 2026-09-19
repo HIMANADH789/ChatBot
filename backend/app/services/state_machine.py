@@ -34,7 +34,12 @@ from app.services.context_media_service import is_leaf_node
 
 logger = logging.getLogger(__name__)
 
-NAVIGATION_MAIN_MENU_TRIGGERS = {"main menu", "menu", "start", "restart", "reset", "home"}
+NAVIGATION_MAIN_MENU_TRIGGERS = {
+    "main menu", "menu", "start", "restart", "reset", "home",
+    "/reset", "/restart", "/newsession", "/clear", "/start",
+    "new session", "clear session", "reset session", "restart session",
+    "reset conversation", "new chat", "start over", "clear chat", "reload session"
+}
 NAVIGATION_BACK_TRIGGERS = {"back", "go back", "previous", "0"}
 
 
@@ -169,16 +174,23 @@ class StateMachineRouter:
         payload = (event.payload or "").strip()
         norm_payload = payload.lower()
 
-        # ── 1. Global Navigation: Main Menu / Restart ───────────────────────
+        # ── 1. Global Navigation: Session Reload / Reset / Main Menu ───────
         if norm_payload in NAVIGATION_MAIN_MENU_TRIGGERS:
-            await state_store.reset_state(state)
+            await state_store.reset_state(state, clear_context=True)
+            try:
+                from app.services.chat_service import clear_session_history
+                await clear_session_history(state.session_id)
+            except Exception as e:
+                logger.debug("Failed to clear chat session history on reset: %s", e)
+
             root = graph.get_root_node()
             if root:
                 state.current_node_id = root.node_id
                 state.active_menu_id = root.node_id
                 state.increment_node_count(root.node_id)
                 await state_store.save_state(state)
-                resp = self._build_menu_response(root, state, body_prefix="Main Menu — Please select an option:")
+                prefix = "🔄 Session reloaded! Conversation history & state cleared.\n\nPlease select an option:"
+                resp = self._build_menu_response(root, state, body_prefix=prefix)
                 return (resp, False, None)
 
         # ── 2. Global Navigation: Go Back ───────────────────────────────────
