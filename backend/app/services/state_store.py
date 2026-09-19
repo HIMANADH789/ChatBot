@@ -26,7 +26,7 @@ from app.db.mongodb import get_db
 logger = logging.getLogger(__name__)
 
 SESSION_STATES_COLLECTION = "session_states"
-DEFAULT_SESSION_TTL_SECONDS = 86400  # 24 hours
+DEFAULT_SESSION_TTL_SECONDS = 5400  # 1.5 hours (90 minutes)
 
 
 @dataclass
@@ -120,8 +120,13 @@ class StateStore:
                 state.last_interaction_at = now
                 return state
             else:
-                # Expired in memory
+                # Expired in memory -> purge chat history from MongoDB too
                 del self._memory_store[session_key]
+                try:
+                    from app.services.chat_service import clear_session_history
+                    await clear_session_history(session_key)
+                except Exception as exc:
+                    logger.debug("Failed to purge chat history on TTL expiration: %s", exc)
 
         # 2. Check persistence layer (MongoDB)
         db = _safe_get_db()
@@ -138,6 +143,13 @@ class StateStore:
                 state.last_interaction_at = now
                 self._memory_store[session_key] = state
                 return state
+            else:
+                # Expired in DB
+                try:
+                    from app.services.chat_service import clear_session_history
+                    await clear_session_history(session_key)
+                except Exception as exc:
+                    logger.debug("Failed to purge chat history on DB TTL expiration: %s", exc)
 
         # 3. Create fresh state if needed
         if auto_create:

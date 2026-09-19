@@ -176,7 +176,22 @@ class StateMachineRouter:
         norm_payload = payload.lower()
 
         # ── 1. Global Navigation: Session Reload / Reset / Main Menu ───────
-        if norm_payload in NAVIGATION_MAIN_MENU_TRIGGERS:
+        reset_cmd_matched = False
+        remaining_query = ""
+        
+        # Check for explicit reset/restart commands or prefix text like "/reset Hello I am Venu..."
+        reset_prefixes = ("/reset", "/restart", "/newsession", "/clear", "reset", "restart", "new session", "reload session")
+        for pfx in reset_prefixes:
+            if norm_payload == pfx or norm_payload.startswith(pfx + " "):
+                reset_cmd_matched = True
+                if norm_payload.startswith(pfx + " "):
+                    remaining_query = payload[len(pfx):].strip()
+                break
+
+        if not reset_cmd_matched and norm_payload in NAVIGATION_MAIN_MENU_TRIGGERS:
+            reset_cmd_matched = True
+
+        if reset_cmd_matched:
             await state_store.reset_state(state, clear_context=True)
             try:
                 from app.services.chat_service import clear_session_history
@@ -184,15 +199,38 @@ class StateMachineRouter:
             except Exception as e:
                 logger.debug("Failed to clear chat session history on reset: %s", e)
 
-            root = graph.get_root_node()
-            if root:
-                state.current_node_id = root.node_id
-                state.active_menu_id = root.node_id
-                state.increment_node_count(root.node_id)
-                await state_store.save_state(state)
-                prefix = "🔄 Session reloaded! Conversation history & state cleared.\n\nPlease select an option:"
-                resp = self._build_menu_response(root, state, body_prefix=prefix)
-                return (resp, False, None)
+            # If user included a query right after reset command (e.g. "/reset Hello I am Venu...")
+            if remaining_query:
+                event.payload = remaining_query
+                payload = remaining_query
+                norm_payload = remaining_query.lower()
+                # Continue evaluation below with fresh state & remaining query text!
+            else:
+                # If explicit menu requested ("menu", "main menu", "home"), show root menu
+                if norm_payload in ("main menu", "menu", "home", "🔄 main menu"):
+                    root = graph.get_root_node()
+                    if root:
+                        state.current_node_id = root.node_id
+                        state.active_menu_id = root.node_id
+                        state.increment_node_count(root.node_id)
+                        await state_store.save_state(state)
+                        prefix = "🔄 Main Menu:\nPlease select an option:"
+                        resp = self._build_menu_response(root, state, body_prefix=prefix)
+                        return (resp, False, None)
+
+                # Otherwise return clean, crisp reset confirmation
+                reset_msg = "🔄 Session reloaded! State & conversation history cleared. How can I assist you today?"
+                return (
+                    EngineResponse(
+                        session_id=state.session_id,
+                        text=reset_msg,
+                        is_deterministic=True,
+                        active_node_id=None,
+                        actions=[BotAction(action_type=ActionType.TEXT, payload={"text": reset_msg})],
+                    ),
+                    False,
+                    None,
+                )
 
         # ── 2. Global Navigation: Go Back ───────────────────────────────────
         if norm_payload in NAVIGATION_BACK_TRIGGERS:

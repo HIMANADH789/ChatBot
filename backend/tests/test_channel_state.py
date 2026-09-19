@@ -287,8 +287,16 @@ class TestDynamicStateRefresher(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(res)
         self.assertTrue(res.is_deterministic)
-        self.assertIn("Session reloaded", res.interactive_menu.get("body_text", ""))
+        self.assertIn("Session reloaded", res.text)
         self.assertEqual(state.navigation_stack, [])
+        self.assertEqual(state.context_variables, {})
+
+        # Test /reset with inline query text
+        state.context_variables["user_name"] = "Venu"
+        evt_inline = UserEvent(tenant_id="tenant_test", channel="whatsapp", user_id="phone_888", payload="/reset Hello I am Venu", event_type=EventType.TEXT)
+        res_inline, requires_rag_inline, query_inline = await router.evaluate_event(evt_inline, state, profile)
+        self.assertTrue(requires_rag_inline)
+        self.assertEqual(query_inline, "Hello I am Venu")
         self.assertEqual(state.context_variables, {})
 
 
