@@ -279,8 +279,9 @@ async def evaluate_image_triggers(
         was_shown = _was_image_shown_in_history(path, history) or _was_image_shown_in_history(title, history)
         tag_lower = tag.lower()
 
-        # Directive 1: "Once per session" suppression rule (unless explicitly requested)
-        if was_shown and any(k in tag_lower for k in ("once", "only once", "first time")) and not is_explicit_request:
+        # Directive 1: Already-shown suppression rule (unless explicitly requested)
+        if was_shown and not is_explicit_request:
+            logger.debug("Skipping image '%s' because it was already sent in this session", title)
             continue
 
         # Directive 2: Start of conversation directive

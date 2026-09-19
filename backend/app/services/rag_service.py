@@ -842,12 +842,29 @@ async def query(
         cached = await check_cache(client_id, query_embedding_for_cache)
         if cached:
             logger.debug("Cache hit for query: %s", search_query[:60])
-            await add_message(session_id, "assistant", cached["response"], cached["sources"])
+            cached_resp = cached["response"]
+            # Dynamically personalize visitor greeting name in cached response
+            if active_name:
+                cached_resp = re.sub(
+                    r"\b(hello|hi|welcome|greetings)\s+[A-Za-z0-9_\-\.]+\b",
+                    lambda m: f"{m.group(1)} {active_name}",
+                    cached_resp,
+                    flags=re.IGNORECASE,
+                )
+            else:
+                cached_resp = re.sub(
+                    r"\b(hello|hi|welcome|greetings)\s+[A-Z][a-z]+\b",
+                    lambda m: f"{m.group(1)}",
+                    cached_resp,
+                    flags=re.IGNORECASE,
+                )
+
+            await add_message(session_id, "assistant", cached_resp, cached["sources"])
             response_time = int((time.time() - start) * 1000)
-            await _log_query(client_id, session_id, message, cached["response"], cached["sources"], response_time, "cache", {}, channel=channel)
+            await _log_query(client_id, session_id, message, cached_resp, cached["sources"], response_time, "cache", {}, channel=channel)
             matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm)
             return {
-                "response": cached["response"],
+                "response": cached_resp,
                 "sources": cached["sources"],
                 "session_id": session_id,
                 "interactive_menu": matched_menu,
