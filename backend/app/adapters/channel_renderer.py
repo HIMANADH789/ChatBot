@@ -80,7 +80,7 @@ class BaseChannelRenderer(ABC):
         Process the EngineResponse through this renderer.
         Replaces the actions list with channel-specific actions.
         """
-        if not response.interactive_menu:
+        if not response.interactive_menu and not response.context_images:
             return response
 
         rendered_actions = self.render_menu_actions(response, state)
@@ -173,6 +173,21 @@ class WhatsAppChannelRenderer(BaseChannelRenderer):
                 "header_text": header_text[:60] if header_text else "",
             },
         ))
+
+        # Also include any contextual media images matched during RAG
+        if response.context_images:
+            for img in response.context_images:
+                img_path = img.get("image_path") or img.get("image_url", "")
+                if img_path:
+                    actions.append(BotAction(
+                        action_type=ActionType.IMAGE_MEDIA,
+                        payload={
+                            "image_url": img_path,
+                            "image_path": img_path,
+                            "caption": img.get("caption") or img.get("title", ""),
+                            "title": img.get("title", ""),
+                        },
+                    ))
 
         return actions
 

@@ -138,8 +138,8 @@ class HybridEngine:
             response_time_ms=elapsed_ms,
         )
 
-        # Apply channel-specific rendering to RAG responses that include menus
-        if matched_menu:
+        # Apply channel-specific rendering to RAG responses that include menus or media artifacts
+        if matched_menu or matched_images:
             renderer = get_channel_renderer(event.channel)
             response = renderer.render(response, state)
 
