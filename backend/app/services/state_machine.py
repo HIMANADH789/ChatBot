@@ -323,5 +323,46 @@ class StateMachineRouter:
         return await self._evaluate_graph(event, state, graph)
 
 
+
+async def refresh_dynamic_context(
+    event: UserEvent,
+    state: UserSessionState,
+    history: list,
+    llm: Optional[Any] = None,
+) -> UserSessionState:
+    """
+    Dimension 1: Dynamic Editable State Refresher.
+    Evaluates incoming request to refresh/override dynamic user profile
+    (user_name, target_course, interest, step) turn-by-turn.
+    Guarantees that context switches (e.g. Sarah introducing themselves after Amit)
+    immediately override and persist updated state.
+    """
+    query = (event.payload or "").strip()
+    if not query:
+        return state
+
+    # 1. Dynamic User Name Extraction & Immediate Override
+    from app.services.rag_service import extract_user_name
+    extracted_name = extract_user_name(query)
+    if extracted_name:
+        state.context_variables["user_name"] = extracted_name
+        logger.info("Dynamic State Refresher: User name updated to '%s' (session=%s)", extracted_name, state.session_id)
+
+    # 2. Dynamic Course / Interest Tracking
+    query_lower = query.lower()
+    if "ca intermediate" in query_lower or "ca inter" in query_lower:
+        state.context_variables["target_course"] = "CA Intermediate"
+    elif "ca foundation" in query_lower:
+        state.context_variables["target_course"] = "CA Foundation"
+    elif "finance" in query_lower or "f&a" in query_lower:
+        state.context_variables["target_course"] = "Finance & Accounting"
+    elif "hr" in query_lower or "human resources" in query_lower:
+        state.context_variables["target_course"] = "Human Resources"
+
+    # Persist updated session state to store
+    await state_store.save_state(state)
+    return state
+
+
 # Global singleton instance
 state_machine = StateMachineRouter()

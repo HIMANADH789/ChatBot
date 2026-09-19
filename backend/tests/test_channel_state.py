@@ -242,6 +242,25 @@ class TestMenuGraphFromConfig(unittest.TestCase):
 # 2. UserSessionState Tests
 # ═══════════════════════════════════════════════════════════════════════════════
 
+class TestDynamicStateRefresher(unittest.IsolatedAsyncioTestCase):
+    """Test Dimension 1: Dynamic Editable State Refresher for context switching."""
+
+    async def test_dynamic_name_override(self):
+        from app.services.state_store import UserSessionState, state_store
+        from app.services.state_machine import refresh_dynamic_context
+        from app.core.user_event import UserEvent, EventType
+
+        state = await state_store.get_state("tenant_test", "whatsapp", "phone_999")
+        state.context_variables["user_name"] = "Amit"
+
+        # User introduces as Sarah -> Should override Amit to Sarah
+        evt1 = UserEvent(tenant_id="tenant_test", channel="whatsapp", user_id="phone_999", payload="Hello I am Sarah, can you tell me about CA Intermediate?", event_type=EventType.TEXT)
+        state = await refresh_dynamic_context(evt1, state, history=[])
+
+        self.assertEqual(state.context_variables.get("user_name"), "Sarah")
+        self.assertEqual(state.context_variables.get("target_course"), "CA Intermediate")
+
+
 class TestUserSessionState(unittest.TestCase):
     """Test the updated UserSessionState with navigation_stack and execution counts."""
 

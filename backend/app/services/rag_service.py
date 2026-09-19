@@ -681,10 +681,14 @@ def _build_rag_prompt(
     context_variables: Optional[dict] = None,
 ) -> str:
     user_context_block = ""
+    active_name = None
     if context_variables:
         active_vars = [f"• {k.replace('_', ' ').title()}: {v}" for k, v in context_variables.items() if v]
         if active_vars:
-            user_context_block = "Active User Session Profile Context:\n" + "\n".join(active_vars) + "\n\n"
+            user_context_block = "Active User Session Profile Context (Dynamic State):\n" + "\n".join(active_vars) + "\n\n"
+        active_name = context_variables.get("user_name")
+
+    name_instruction = f"If addressing the user by name, address them as '{active_name}'." if active_name else ""
 
     return f"""Context from knowledge base:
 {context}
@@ -693,14 +697,15 @@ def _build_rag_prompt(
 User question: {message}
 
 Answer guidelines:
-1. Answer using ONLY the context above. Provide complete, accurate, and direct information without omitting key facts, rules, fees, dates, or steps.
-2. Structure your answer clearly. When listing specific rules, penalties, steps, dates, requirements, or documents, format them with clean bullet points (•).
-3. Do NOT invent or assume any information not present in the context.
-4. Speak naturally, directly, and professionally. Never say "the context states", "based on the document", "not specified in the provided context", or similar meta-phrases. Just answer the question directly.
-5. Do NOT suggest contacting anyone or any department unless the question is completely unanswerable from the context.
-6. Do NOT add a "Sources" section or mention internal document/chunk filenames.
-7. Format: use bullet points (•) for lists, short paragraphs, normal sentence casing. No raw markdown headers (##, ###) or backticks.
-8. Output ONLY the direct final answer. Do NOT output <think> tags, reasoning steps, conflict resolutions, or scratchpad text."""
+1. Answer using ONLY the context above. Provide complete, accurate, and direct information with maximum factual density. {name_instruction}
+2. Keep your answer crisp, concise, and mobile-friendly. Avoid long wordy intros or fluff.
+3. Structure your answer clearly using clean bullet points (•) for details, course breakdown, eligibility, or steps.
+4. Do NOT invent or assume any information not present in the context.
+5. Speak naturally, directly, and professionally. Never say "the context states", "based on the document", or similar meta-phrases.
+6. Do NOT suggest contacting anyone or any department unless the question is completely unanswerable from the context.
+7. Do NOT add a "Sources" section or mention internal document filenames.
+8. Format: use bullet points (•) for lists, short paragraphs, normal sentence casing. No raw markdown headers (##, ###).
+9. Output ONLY the direct final answer. Do NOT output <think> tags, reasoning steps, or scratchpad text."""
 
 
 # ── Public API: non-streaming ─────────────────────────────────────────────────
