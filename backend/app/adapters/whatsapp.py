@@ -158,7 +158,12 @@ class WhatsAppAdapter(ChannelAdapter):
         Send reply via Meta WhatsApp Cloud API.
         Endpoint: POST /v20.0/{phone_number_id}/messages
         Returns dict with status, outgoing payload, and Meta API response.
+
+        Applies WhatsApp-native rich text formatting (bold headings, contextual
+        emojis, clean bullet points) before dispatch for mobile readability.
         """
+        from app.utils.whatsapp_formatter import format_for_whatsapp
+
         phone_number_id = config.get("phone_number_id") or msg.metadata.get("phone_number_id")
         access_token = config.get("access_token", "")
 
@@ -166,6 +171,9 @@ class WhatsAppAdapter(ChannelAdapter):
         clean_text = (response_text or "").strip()
         if not clean_text:
             clean_text = "Hello! How can I assist you today?"
+
+        # Apply WhatsApp-native rich text formatting
+        clean_text = format_for_whatsapp(clean_text)
 
         if not phone_number_id or not access_token:
             logger.error("WhatsApp send failed: missing phone_number_id or access_token for %s", msg.client_id)
@@ -259,11 +267,19 @@ class WhatsAppAdapter(ChannelAdapter):
         caption: Optional[str],
         config: dict,
     ) -> dict:
-        """Send an image attachment via WhatsApp."""
+        """Send an image attachment via WhatsApp, converting public Google Drive URLs to direct renderable links."""
+        from app.utils.media_url import transform_google_drive_url, extract_google_drive_file_id
+
         phone_number_id = config.get("phone_number_id") or msg.metadata.get("phone_number_id")
         access_token = config.get("access_token", "")
         if not phone_number_id or not access_token or not image_url:
             return {"status": "skipped"}
+
+        # Transform Google Drive URLs to directly renderable format
+        direct_url = transform_google_drive_url(image_url)
+        is_drive = extract_google_drive_file_id(image_url) is not None
+        if is_drive:
+            logger.info("Google Drive image URL transformed: %s -> %s", image_url[:80], direct_url[:80])
 
         payload = {
             "messaging_product": "whatsapp",
@@ -271,10 +287,21 @@ class WhatsAppAdapter(ChannelAdapter):
             "to": msg.user_id,
             "type": "image",
             "image": {
-                "link": image_url,
+                "link": direct_url,
             },
         }
         if caption:
             payload["image"]["caption"] = caption[:1024]
 
-        return await self._post_payload(phone_number_id, access_token, payload)
+        result = await self._post_payload(phone_number_id, access_token, payload)
+
+        # Fallback: if the primary thumbnail URL failed and this was a Drive link,
+        # retry with direct download URL
+        if is_drive and result.get("status") != "delivered":
+            from app.utils.media_url import get_direct_download_url
+            fallback_url = get_direct_download_url(image_url)
+            logger.info("Retrying Google Drive image with fallback URL: %s", fallback_url[:80])
+            payload["image"]["link"] = fallback_url
+            result = await self._post_payload(phone_number_id, access_token, payload)
+
+        return result

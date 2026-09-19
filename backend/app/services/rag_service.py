@@ -42,8 +42,9 @@ DEFAULT_SYSTEM_PROMPT = """You are a helpful, knowledgeable, and polite AI assis
 
 Key Guidelines:
 - Keep responses crisp, clean, and mobile-friendly (concise yet covering all essential details completely).
-- Highlight key section headings with bold text (e.g. *Course Overview*, *Eligibility*, *Fee Structure*, *Career Opportunities*).
-- Organize lists, topics, and steps using clean bullet points (•).
+- Structure your responses with clear section headings using markdown (e.g. ## Course Overview, ## Eligibility, ## Fee Structure, ## Career Opportunities).
+- Use **bold** for important terms, names, and key facts.
+- Organize lists, topics, and steps using clean bullet points (- item).
 - For greetings or pleasantries, reply warmly and concisely in 1-2 sentences.
 - End informational answers with a brief, interactive follow-up question offering next steps (e.g. "Would you like details on eligibility, fee structure, or placement support?").
 - Never output internal thought processes, reasoning steps, conflict resolutions, scratchpads, or <think> tags. Output ONLY the direct response."""
@@ -160,11 +161,10 @@ def _clean_markdown(text: str) -> str:
                 clean_paras.append(p)
             text = "\n\n".join(clean_paras).strip()
 
-    # 6. Standard markdown cleanup
-    text = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", text)
-    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
-    text = re.sub(r"`(.+?)`", r"\1", text)
+    # 6. Light cleanup — preserve formatting for channel-specific renderers
+    # Only remove triple-or-more horizontal rules (---, ***, ___)
     text = re.sub(r"^[-*_]{3,}\s*$", "", text, flags=re.MULTILINE)
+    # Condense excessive blank lines
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
@@ -701,8 +701,9 @@ User question: {message}
 Answer guidelines:
 1. Answer using ONLY the context above. Provide complete, accurate, and direct information with high factual density. {name_instruction}
 2. Presentation & Formatting:
-   - Use bold text for key section headings (e.g., *Course Overview*, *Eligibility*, *Key Topics*, *Placement Opportunities*) to make the message visually distinct and easy to scan.
-   - Use clean bullet points (•) for listing items, modules, criteria, or steps.
+   - Use markdown headings (## Heading) for key section labels (e.g., ## Course Overview, ## Eligibility, ## Key Topics, ## Placement Opportunities).
+   - Use **bold** for important terms, names, numbers, and key facts.
+   - Use bullet points (- item) for listing items, modules, criteria, or steps.
 3. Keep the response crisp, well-structured, and easy to read on mobile without losing any factual details.
 4. Speak naturally and professionally. Never use meta-phrases like "according to the context" or "the document states".
 5. Do NOT suggest contacting anyone unless the question is completely unanswerable from the context.
