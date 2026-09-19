@@ -40,7 +40,38 @@ def is_leaf_node(node: dict) -> bool:
 
 
 def normalize_menu_tree(settings: dict, setup_cfg: dict) -> list[dict]:
-    """Retrieve menu tree with fallback to legacy menu_options converted into tree."""
+    """Retrieve menu structure with priority to MenuGraph nodes over legacy trees."""
+    graph_nodes = setup_cfg.get("menu_graph_nodes") or settings.get("menu_graph_nodes") or []
+    if graph_nodes:
+        tree = []
+        for g_node in graph_nodes:
+            opts = g_node.get("options", [])
+            children = [
+                {
+                    "id": opt.get("target_id") or opt.get("option_number") or f"opt_{i}",
+                    "label": opt.get("button_text") or opt.get("label", ""),
+                    "description": "",
+                    "descriptor_tag": "",
+                    "action_question": opt.get("rag_prompt") or "",
+                    "target_type": opt.get("target_type") or "TRIGGER_RAG",
+                    "children": [],
+                }
+                for i, opt in enumerate(opts)
+            ]
+            tree.append({
+                "id": g_node.get("node_id", ""),
+                "node_id": g_node.get("node_id", ""),
+                "label": g_node.get("title", ""),
+                "title": g_node.get("title", ""),
+                "description": g_node.get("whatsapp_media", {}).get("caption", "") or f"Options for {g_node.get('title')}",
+                "descriptor_tag": g_node.get("descriptor_tag", ""),
+                "frequency": g_node.get("frequency", "on_intent"),
+                "options": opts,
+                "children": children,
+                "whatsapp_media": g_node.get("whatsapp_media", {}),
+            })
+        return tree
+
     tree = setup_cfg.get("menu_tree") or settings.get("menu_tree") or []
     if tree:
         return tree
@@ -140,14 +171,26 @@ async def evaluate_menu_triggers(
         k in query_lower for k in (
             "menu", "options", "courses list", "programs list", "show options",
             "what can you do", "main menu", "list of courses", "show courses",
-            "courses again", "give me list", "again"
+            "courses again", "give me list", "again", "course menu"
+        )
+    )
+    is_specific_factual_query = any(
+        k in query_lower for k in (
+            "fee", "fees", "eligibility", "syllabus", "location", "address",
+            "admission process", "installment", "payment", "duration", "timing",
+            "dates", "how to apply", "cost", "price", "discount"
         )
     )
 
+    # Do not trigger full menu navigation if user is asking a specific factual query (unless explicitly requesting menu)
+    if is_specific_factual_query and not is_explicit_request:
+        logger.debug("Suppressing menu trigger for specific factual query: %s", query)
+        return None
+
     for node in menu_tree:
         tag = (node.get("descriptor_tag") or "").strip()
-        node_label = (node.get("label") or "").strip()
-        node_id = (node.get("id") or "").strip()
+        node_label = (node.get("label") or node.get("title") or "").strip()
+        node_id = (node.get("id") or node.get("node_id") or "").strip()
         was_shown = _was_node_shown_in_history(node_label, history) or _was_node_shown_in_history(node_id, history)
 
         tag_lower = tag.lower()
