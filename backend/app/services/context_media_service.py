@@ -132,7 +132,12 @@ async def evaluate_menu_triggers(
         k in query_lower for k in (
             "fee", "fees", "eligibility", "syllabus", "location", "address",
             "admission process", "installment", "payment", "duration", "timing",
-            "dates", "how to apply", "cost", "price", "discount"
+            "dates", "how to apply", "cost", "price", "discount", "requirement",
+            "requirements", "curriculum", "subjects", "topics", "tell about",
+            "tell me about", "explain", "details of", "detail of", "overview of",
+            "what is", "info on", "information about", "describe", "know about",
+            "want to know", "can you tell", "give info", "ca foundation", "ca intermediate",
+            "ca final", "finance & accounting", "human resources", "hr course", "f&a course"
         )
     )
 
@@ -237,7 +242,7 @@ async def evaluate_image_triggers(
         "image", "photo", "chart", "map", "complete", "details", "course", "courses",
         "institute", "professional", "including", "eligibility", "program", "programs",
         "coaching", "training", "academy", "overall", "what", "are", "the", "with", "at", "sv",
-        "foundation", "intermediate", "advanced", "and", "or", "for", "in", "on", "of", "to",
+        "and", "or", "for", "in", "on", "of", "to",
         "is", "it", "by", "from", "an", "a", "as", "also", "can", "you", "give", "me", "tell", "us",
         "display", "show"
     }
