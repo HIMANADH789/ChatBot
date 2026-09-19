@@ -27,8 +27,8 @@ async def main():
         {
             "id": "f79aebba-6180-4fee-af67-b104595e45d7",
             "title": "Finance & Accounting",
-            "image_path": "https://drive.google.com/file/d/1tV_nFbzA2PKgp1azvxrN2uUdpmvNIkwm/view",
-            "descriptor_tag": "Display when user inquires about Finance and Accounting F&A course brochure, fee structure, or syllabus",
+            "image_path": "https://tse1.mm.bing.net/th/id/OIP.4yJ3Fv0-0Qx-W04_S2w7cAHaHa?pid=ImgDet&rs=1",
+            "descriptor_tag": "Display when user inquires about Finance and Accounting F&A course brochure, placements, fee structure, or syllabus",
             "caption": "Finance & Accounting Program Overview",
             "frequency": "on_intent"
         },

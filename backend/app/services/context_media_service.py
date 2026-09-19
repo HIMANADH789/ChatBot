@@ -267,13 +267,30 @@ async def evaluate_image_triggers(
             matched.append(img)
             continue
 
-        # Directive 3: Direct title match in query
-        norm_title = title.lower().replace("&", "and").replace("/", " ")
-        if norm_title and len(norm_title) >= 2 and norm_title in norm_query:
+        # Directive 3: Abbreviation & Course Keyword Matching (F&A, Finance, Accounting, HR, CA)
+        abbrev_matched = False
+        if any(k in query_lower for k in ("f&a", "f and a", "finance", "accounting")):
+            if any(k in title.lower() or k in tag_lower for k in ("f&a", "finance", "accounting")):
+                abbrev_matched = True
+        elif any(k in query_lower for k in ("hr", "human resources")):
+            if any(k in title.lower() or k in tag_lower for k in ("hr", "human resources")):
+                abbrev_matched = True
+        elif any(k in query_lower for k in ("ca", "commerce")):
+            if any(k in title.lower() or k in tag_lower for k in ("ca", "commerce")):
+                abbrev_matched = True
+
+        if abbrev_matched:
             matched.append(img)
             continue
 
-        # Directive 4: Descriptor tag keyword overlap
+        # Directive 4: Direct title match in query (bidirectional)
+        norm_title = title.lower().replace("&", "and").replace("/", " ")
+        if norm_title and len(norm_title) >= 2:
+            if norm_title in norm_query or (len(norm_query) >= 3 and norm_query in norm_title):
+                matched.append(img)
+                continue
+
+        # Directive 5: Descriptor tag keyword overlap
         if tag:
             norm_tag = tag_lower.replace("&", "and").replace("/", " ")
             tag_words = set(w for w in re.findall(r"\b\w+\b", norm_tag) if len(w) >= 2 and w not in stop_words)
