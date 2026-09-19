@@ -81,59 +81,29 @@ async def test_layer2_state_machine_deterministic_routing():
     store = StateStore()
     state = await store.get_state(tenant_id="tenant_1", channel="whatsapp", user_id="user_abc")
 
-    mock_profile = {
-        "menu_tree": [
-            {
-                "id": "programs_menu",
-                "label": "Our Programs",
-                "children": [
-                    {
-                        "id": "ca_node",
-                        "label": "Chartered Accountancy (CA)",
-                        "action_question": "Provide complete information regarding CA Foundation, Inter, and Final coaching.",
-                        "children": [],
-                    },
-                    {
-                        "id": "direct_info",
-                        "label": "Office Hours",
-                        "direct_answer": "Our administrative office is open Mon-Sat 9:00 AM to 6:00 PM.",
-                        "children": [],
-                    },
-                ],
-            }
-        ],
-        "menu_index": {
-            "programs_menu": {
-                "id": "programs_menu",
-                "label": "Our Programs",
-                "children": [
-                    {
-                        "id": "ca_node",
-                        "label": "Chartered Accountancy (CA)",
-                        "action_question": "Provide complete information regarding CA Foundation, Inter, and Final coaching.",
-                        "children": [],
-                    },
-                    {
-                        "id": "direct_info",
-                        "label": "Office Hours",
-                        "direct_answer": "Our administrative office is open Mon-Sat 9:00 AM to 6:00 PM.",
-                        "children": [],
-                    },
-                ],
-            },
-            "ca_node": {
-                "id": "ca_node",
-                "label": "Chartered Accountancy (CA)",
-                "action_question": "Provide complete information regarding CA Foundation, Inter, and Final coaching.",
-                "children": [],
-            },
-            "direct_info": {
-                "id": "direct_info",
-                "label": "Office Hours",
-                "direct_answer": "Our administrative office is open Mon-Sat 9:00 AM to 6:00 PM.",
-                "children": [],
-            },
+    from app.core.menu_graph import MenuGraph
+    nodes = [
+        {
+            "node_id": "MENU_ROOT",
+            "title": "Main Menu",
+            "options": [
+                {"option_number": "1", "button_text": "Our Programs", "target_type": "NAVIGATE_MENU", "target_id": "programs_menu"},
+            ]
         },
+        {
+            "node_id": "programs_menu",
+            "title": "Our Programs",
+            "options": [
+                {"option_number": "1", "button_text": "Chartered Accountancy (CA)", "target_type": "TRIGGER_RAG", "rag_prompt": "Provide complete information regarding CA Foundation, Inter, and Final coaching."},
+                {"option_number": "2", "button_text": "Office Hours", "target_type": "DIRECT_ANSWER", "direct_answer": "Our administrative office is open Mon-Sat 9:00 AM to 6:00 PM."},
+            ]
+        }
+    ]
+    graph = MenuGraph.from_config(nodes, root_node_id="MENU_ROOT")
+
+    mock_profile = {
+        "menu_graph": graph,
+        "menu_index": {},
     }
 
     # Test Case 1: Clicking intermediate menu node -> Immediate sub-menu with ZERO LLM
@@ -227,33 +197,31 @@ async def test_layer4_bm25_and_reciprocal_rank_fusion():
 async def test_end_to_end_hybrid_engine():
     # Setup mock profile in memory cache for "tenant_demo"
     from app.services.profile_compiler import _PROFILE_CACHE
+    from app.core.menu_graph import MenuGraph
+    demo_nodes = [
+        {
+            "node_id": "MENU_ROOT",
+            "title": "Welcome Menu",
+            "options": [
+                {"option_number": "1", "button_text": "Fee Structures", "target_type": "NAVIGATE_MENU", "target_id": "fees_menu"},
+            ]
+        },
+        {
+            "node_id": "fees_menu",
+            "title": "Fee Structures",
+            "options": [
+                {"option_number": "1", "button_text": "CA Fees", "target_type": "DIRECT_ANSWER", "direct_answer": "CA Foundation fee is 9200 INR."},
+            ]
+        }
+    ]
+    demo_graph = MenuGraph.from_config(demo_nodes, root_node_id="MENU_ROOT")
+
     _PROFILE_CACHE[("tenant_demo", "whatsapp")] = {
         "client_id": "tenant_demo",
         "channel": "whatsapp",
         "compiled_system_prompt": "You are a professional assistant for Demo Institute.",
-        "menu_tree": [
-            {
-                "id": "fees_menu",
-                "label": "Fee Structures",
-                "children": [
-                    {"id": "ca_fee", "label": "CA Fees", "direct_answer": "CA Foundation fee is 9200 INR."},
-                ],
-            }
-        ],
-        "menu_index": {
-            "fees_menu": {
-                "id": "fees_menu",
-                "label": "Fee Structures",
-                "children": [
-                    {"id": "ca_fee", "label": "CA Fees", "direct_answer": "CA Foundation fee is 9200 INR."},
-                ],
-            },
-            "ca_fee": {
-                "id": "ca_fee",
-                "label": "CA Fees",
-                "direct_answer": "CA Foundation fee is 9200 INR.",
-            },
-        },
+        "menu_graph": demo_graph,
+        "menu_index": {},
         "context_images": [],
         "descriptive_rules": [],
         "context_config": {"mode": "none", "instructions": "", "capacity": 4},

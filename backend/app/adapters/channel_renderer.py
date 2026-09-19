@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+
+logger = logging.getLogger(__name__)
 from typing import Any, Dict, List, Optional
 
 from app.core.user_event import EngineResponse, BotAction, ActionType

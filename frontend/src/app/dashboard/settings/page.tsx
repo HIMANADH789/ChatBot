@@ -30,8 +30,6 @@ Be concise, friendly, and professional.`,
   context_mode: "none",
   context_instructions: "",
   context_capacity: 4,
-  menu_options: [],
-  menu_tree: [],
   menu_graph_nodes: [
     {
       node_id: "MENU_ROOT",
@@ -125,8 +123,6 @@ export default function SettingsPage() {
         context_mode: s?.context_mode ?? activeSetup?.context_mode ?? DEFAULTS.context_mode,
         context_instructions: s?.context_instructions ?? activeSetup?.context_instructions ?? DEFAULTS.context_instructions,
         context_capacity: s?.context_capacity ?? activeSetup?.context_capacity ?? DEFAULTS.context_capacity,
-        menu_options: s?.menu_options ?? DEFAULTS.menu_options,
-        menu_tree: (s?.menu_tree && s.menu_tree.length > 0) ? s.menu_tree : (activeSetup?.menu_tree ?? DEFAULTS.menu_tree),
         menu_graph_nodes: (s?.menu_graph_nodes && s.menu_graph_nodes.length > 0)
           ? s.menu_graph_nodes
           : (activeSetup?.menu_graph_nodes && activeSetup.menu_graph_nodes.length > 0)

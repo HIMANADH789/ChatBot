@@ -214,46 +214,28 @@ class TestMenuGraph(unittest.TestCase):
         self.assertTrue(graph.get_node("N2").is_leaf)
 
 
-class TestMenuGraphLegacyBridge(unittest.TestCase):
-    """Test backward-compatible conversion from legacy menu_tree to MenuGraph."""
+class TestMenuGraphFromConfig(unittest.TestCase):
+    """Test dynamic initialization of MenuGraph from config nodes."""
 
-    def test_from_legacy_menu_tree(self):
+    def test_from_config(self):
         from app.core.menu_graph import MenuGraph, TARGET_NAVIGATE_MENU, TARGET_TRIGGER_RAG
-        legacy_tree = [
+        nodes_raw = [
             {
-                "id": "courses",
-                "label": "Our Courses",
-                "children": [
-                    {
-                        "id": "ca",
-                        "label": "CA Program",
-                        "children": [],
-                        "action_question": "Tell me about the CA program",
-                    },
-                    {
-                        "id": "bcom",
-                        "label": "B.Com",
-                        "children": [],
-                        "direct_answer": "B.Com is a 3-year degree program.",
-                    },
+                "node_id": "MENU_ROOT",
+                "title": "Welcome Menu",
+                "options": [
+                    {"option_number": "1", "button_text": "CA Program", "target_type": "NAVIGATE_MENU", "target_id": "MENU_CA"},
+                    {"option_number": "2", "button_text": "Admissions", "target_type": "TRIGGER_RAG", "rag_prompt": "Tell me about admissions"},
                 ],
-            },
-            {
-                "id": "admissions",
-                "label": "Admissions",
-                "children": [],
-                "action_question": "",
-            },
+            }
         ]
-        graph = MenuGraph.from_legacy_menu_tree(legacy_tree)
+        graph = MenuGraph.from_config(nodes_raw, root_node_id="MENU_ROOT")
         self.assertGreater(graph.node_count, 0)
 
-        # Root should be the first node
+        # Root should be MENU_ROOT
         root = graph.get_root_node()
         self.assertIsNotNone(root)
-
-        # Root should have options pointing to children
-        self.assertGreater(len(root.options), 0)
+        self.assertEqual(len(root.options), 2)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

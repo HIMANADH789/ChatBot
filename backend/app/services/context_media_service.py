@@ -71,53 +71,7 @@ def normalize_menu_tree(settings: dict, setup_cfg: dict) -> list[dict]:
                 "whatsapp_media": g_node.get("whatsapp_media", {}),
             })
         return tree
-
-    tree = setup_cfg.get("menu_tree") or settings.get("menu_tree") or []
-    if tree:
-        return tree
-
-    # Legacy conversion: menu_options -> menu_tree
-    legacy = settings.get("menu_options") or []
-    converted = []
-    for opt in legacy:
-        opt_id = opt.get("id", "")
-        opt_label = opt.get("label", "")
-        children = []
-        for sub in opt.get("submenus", []):
-            sub_id = sub.get("id", "")
-            sub_label = sub.get("label", "")
-            sub_qs = sub.get("sub_questions", [])
-            q_children = [
-                {
-                    "id": f"{sub_id}_q_{i}",
-                    "label": q[:40],
-                    "description": "",
-                    "descriptor_tag": "",
-                    "frequency": "on_intent",
-                    "action_question": q,
-                    "children": [],
-                }
-                for i, q in enumerate(sub_qs)
-            ]
-            children.append({
-                "id": sub_id,
-                "label": sub_label,
-                "description": "",
-                "descriptor_tag": "",
-                "frequency": "on_intent",
-                "action_question": "",
-                "children": q_children,
-            })
-        converted.append({
-            "id": opt_id,
-            "label": opt_label,
-            "description": "",
-            "descriptor_tag": f"When user inquires about {opt_label}",
-            "frequency": "on_intent",
-            "action_question": "",
-            "children": children,
-        })
-    return converted
+    return []
 
 
 def get_context_images(settings: dict, setup_cfg: dict) -> list[dict]:

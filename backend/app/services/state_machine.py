@@ -26,6 +26,7 @@ from app.core.menu_graph import (
     NodeOption,
     TARGET_NAVIGATE_MENU,
     TARGET_TRIGGER_RAG,
+    TARGET_DIRECT_ANSWER,
     FREQ_ONLY_ONCE,
 )
 from app.services.state_store import UserSessionState, state_store
@@ -41,32 +42,6 @@ class StateMachineRouter:
     """
     Deterministic workflow evaluator using the MenuGraph node model.
     """
-
-    # ── Legacy Helpers (backward compat for tenants without menu_graph) ─────
-
-    @staticmethod
-    def _find_node_by_id_or_label(menu_index: Dict[str, dict], key: str) -> Optional[dict]:
-        if not key:
-            return None
-        norm_key = key.strip().lower()
-        return menu_index.get(key) or menu_index.get(norm_key)
-
-    @staticmethod
-    def _find_node_in_list(nodes: List[dict], key: str) -> Optional[dict]:
-        if not key or not nodes:
-            return None
-        norm_key = key.strip().lower()
-        for node in nodes:
-            node_id = str(node.get("id", "")).strip().lower()
-            label = str(node.get("label", "")).strip().lower()
-            if key == node.get("id") or norm_key == node_id or norm_key == label:
-                return node
-            children = node.get("children", [])
-            if children:
-                found = StateMachineRouter._find_node_in_list(children, key)
-                if found:
-                    return found
-        return None
 
     # ── MenuGraph-Based Evaluation ──────────────────────────────────────────
 
@@ -287,7 +262,22 @@ class StateMachineRouter:
                     # Leaf with no direct_answer and no options → RAG with button text as query
                     return (None, True, matched_option.button_text)
 
-            # Case B: TRIGGER_RAG → Delegate to RAG pipeline with augmented query
+            # Case B: DIRECT_ANSWER → Return immediate direct text answer
+            elif matched_option.target_type == TARGET_DIRECT_ANSWER or matched_option.direct_answer:
+                answer = matched_option.direct_answer or matched_option.button_text
+                return (
+                    EngineResponse(
+                        session_id=state.session_id,
+                        text=answer,
+                        is_deterministic=True,
+                        active_node_id=state.current_node_id,
+                        actions=[BotAction(action_type=ActionType.TEXT, payload={"text": answer})],
+                    ),
+                    False,
+                    None,
+                )
+
+            # Case C: TRIGGER_RAG → Delegate to RAG pipeline with augmented query
             elif matched_option.target_type == TARGET_TRIGGER_RAG:
                 rag_query = matched_option.rag_prompt or matched_option.button_text
                 context_updates = {"last_selected_option": matched_option.button_text}
@@ -302,172 +292,7 @@ class StateMachineRouter:
         # ── 4. No match → Fallthrough to RAG ────────────────────────────────
         return (None, True, payload)
 
-    # ── Legacy Evaluation (backward compat for tenants without MenuGraph) ───
 
-    async def _evaluate_legacy(
-        self,
-        event: UserEvent,
-        state: UserSessionState,
-        tenant_profile: Dict[str, Any],
-    ) -> Tuple[Optional[EngineResponse], bool, Optional[str]]:
-        """
-        Legacy evaluation path using the old menu_tree/menu_index format.
-        Preserves existing behavior for tenants not yet migrated to MenuGraph.
-        """
-        menu_tree: List[dict] = tenant_profile.get("menu_tree", [])
-        menu_index: Dict[str, dict] = tenant_profile.get("menu_index", {})
-        payload = (event.payload or "").strip()
-        norm_payload = payload.lower()
-
-        # ── 1. Global Navigation Triggers (Main Menu / Restart) ────────────────
-        if norm_payload in NAVIGATION_MAIN_MENU_TRIGGERS:
-            await state_store.reset_state(state)
-            if menu_tree:
-                root_menu_body = "Main Menu — Please select an option:"
-                action = BotAction(
-                    action_type=ActionType.INTERACTIVE_MENU,
-                    payload={"body_text": root_menu_body, "options": menu_tree, "header_text": "Main Menu"},
-                )
-                return (
-                    EngineResponse(
-                        session_id=state.session_id,
-                        text="Main Menu",
-                        is_deterministic=True,
-                        active_node_id=None,
-                        actions=[action],
-                        interactive_menu={"body_text": root_menu_body, "options": menu_tree, "label": "Main Menu"},
-                    ),
-                    False,
-                    None,
-                )
-
-        # ── 2. Global Navigation Triggers (Back) ───────────────────────────────
-        if norm_payload in NAVIGATION_BACK_TRIGGERS:
-            if state.navigation_stack:
-                prev_node_id = state.navigation_stack.pop()
-                prev_node = self._find_node_by_id_or_label(menu_index, prev_node_id) or self._find_node_in_list(menu_tree, prev_node_id)
-                state.current_node_id = prev_node_id
-                state.active_menu_id = prev_node_id
-                await state_store.save_state(state)
-
-                if prev_node and not is_leaf_node(prev_node):
-                    children = prev_node.get("children", [])
-                    label = prev_node.get("label", "Menu")
-                    body_text = f"Returning to *{label}*:\nPlease select an option below:"
-                    action = BotAction(
-                        action_type=ActionType.INTERACTIVE_MENU,
-                        payload={"body_text": body_text, "options": children, "header_text": label},
-                    )
-                    return (
-                        EngineResponse(
-                            session_id=state.session_id,
-                            text=f"Returning to {label}",
-                            is_deterministic=True,
-                            active_node_id=prev_node_id,
-                            actions=[action],
-                            interactive_menu={"body_text": body_text, "options": children, "label": label},
-                        ),
-                        False,
-                        None,
-                    )
-            # Fallback to root menu if history is empty
-            await state_store.reset_state(state)
-            if menu_tree:
-                root_menu_body = "Please select an option from the menu below:"
-                return (
-                    EngineResponse(
-                        session_id=state.session_id,
-                        text="Main Menu",
-                        is_deterministic=True,
-                        active_node_id=None,
-                        actions=[BotAction(action_type=ActionType.INTERACTIVE_MENU, payload={"options": menu_tree})],
-                        interactive_menu={"body_text": root_menu_body, "options": menu_tree, "label": "Main Menu"},
-                    ),
-                    False,
-                    None,
-                )
-
-        # ── 3. Evaluate Interactive Selection / Button Click / Matching Node ──
-        interactive_id = event.metadata.get("interactive_id", "")
-        matched_node = None
-        if interactive_id:
-            matched_node = self._find_node_by_id_or_label(menu_index, interactive_id) or self._find_node_in_list(menu_tree, interactive_id)
-
-        if not matched_node and payload:
-            matched_node = self._find_node_by_id_or_label(menu_index, payload) or self._find_node_in_list(menu_tree, payload)
-
-        if matched_node:
-            node_id = str(matched_node.get("id", "") or matched_node.get("label", ""))
-            label = matched_node.get("label", "Option")
-
-            context_updates = {}
-            if "context_var" in matched_node and "context_val" in matched_node:
-                context_updates[matched_node["context_var"]] = matched_node["context_val"]
-            elif "program" in matched_node:
-                context_updates["interested_program"] = matched_node["program"]
-            else:
-                context_updates["last_selected_option"] = label
-
-            # Case A: Intermediate Node (Has children) -> Render Submenu directly (Zero LLM)
-            if not is_leaf_node(matched_node):
-                children = matched_node.get("children", [])
-                await state_store.transition_node(
-                    state,
-                    next_node_id=node_id,
-                    active_menu_id=node_id,
-                    context_updates=context_updates,
-                )
-                body_text = f"You selected: *{label}*\nPlease select an option below:"
-                action = BotAction(
-                    action_type=ActionType.INTERACTIVE_MENU,
-                    payload={"body_text": body_text, "options": children, "header_text": label},
-                )
-                return (
-                    EngineResponse(
-                        session_id=state.session_id,
-                        text=f"[Interactive Menu: {label}]",
-                        is_deterministic=True,
-                        active_node_id=node_id,
-                        actions=[action],
-                        interactive_menu={"body_text": body_text, "options": children, "label": label},
-                    ),
-                    False,
-                    None,
-                )
-
-            # Case B: Leaf Node with Direct Answer -> Zero LLM
-            direct_answer = matched_node.get("direct_answer")
-            if direct_answer:
-                await state_store.transition_node(
-                    state,
-                    next_node_id=node_id,
-                    active_menu_id=state.active_menu_id,
-                    context_updates=context_updates,
-                )
-                return (
-                    EngineResponse(
-                        session_id=state.session_id,
-                        text=direct_answer,
-                        is_deterministic=True,
-                        active_node_id=node_id,
-                        actions=[BotAction(action_type=ActionType.TEXT, payload={"text": direct_answer})],
-                    ),
-                    False,
-                    None,
-                )
-
-            # Case C: Leaf Node with Action Question -> Route to RAG with augmented query
-            action_question = matched_node.get("action_question") or label
-            await state_store.transition_node(
-                state,
-                next_node_id=node_id,
-                active_menu_id=state.active_menu_id,
-                context_updates=context_updates,
-            )
-            return (None, True, action_question)
-
-        # ── 4. Open-Ended Query / Fallthrough to RAG ───────────────────────────
-        return (None, True, payload)
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -486,20 +311,16 @@ class StateMachineRouter:
         If deterministic_response is returned, LLM is bypassed.
         If requires_rag is True, execution proceeds to Layer 3 / Layer 4.
         """
-        # Check if tenant has the new MenuGraph format
+        # Evaluate against compiled MenuGraph instance
         menu_graph_data = tenant_profile.get("menu_graph")
         if menu_graph_data and isinstance(menu_graph_data, MenuGraph):
             return await self._evaluate_graph(event, state, menu_graph_data)
 
         # Check for serialized menu_graph_nodes list in profile
         graph_nodes = tenant_profile.get("menu_graph_nodes", [])
-        if graph_nodes:
-            root_id = tenant_profile.get("menu_graph_root_node_id", "")
-            graph = MenuGraph.from_config(graph_nodes, root_node_id=root_id)
-            return await self._evaluate_graph(event, state, graph)
-
-        # Fallback: legacy menu_tree evaluation
-        return await self._evaluate_legacy(event, state, tenant_profile)
+        root_id = tenant_profile.get("menu_graph_root_node_id", "")
+        graph = MenuGraph.from_config(graph_nodes, root_node_id=root_id) if graph_nodes else MenuGraph()
+        return await self._evaluate_graph(event, state, graph)
 
 
 # Global singleton instance

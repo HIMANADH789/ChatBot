@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # ── Target Type Constants ───────────────────────────────────────────────────────
 TARGET_NAVIGATE_MENU = "NAVIGATE_MENU"
 TARGET_TRIGGER_RAG = "TRIGGER_RAG"
+TARGET_DIRECT_ANSWER = "DIRECT_ANSWER"
 
 # ── Frequency Constants ─────────────────────────────────────────────────────────
 FREQ_ALWAYS = "always"
@@ -34,15 +35,17 @@ class NodeOption:
 
     - option_number: Serial number for input matching ("1", "2", "3")
     - button_text: Display label (≤20 chars for WhatsApp buttons, ≤24 for lists)
-    - target_type: TARGET_NAVIGATE_MENU or TARGET_TRIGGER_RAG
+    - target_type: TARGET_NAVIGATE_MENU, TARGET_TRIGGER_RAG, or TARGET_DIRECT_ANSWER
     - target_id: node_id to navigate to (when target_type is NAVIGATE_MENU)
     - rag_prompt: Augmented query for RAG pipeline (when target_type is TRIGGER_RAG)
+    - direct_answer: Static answer text returned directly (when target_type is DIRECT_ANSWER)
     """
     option_number: str
     button_text: str
     target_type: str = TARGET_NAVIGATE_MENU
     target_id: str = ""
     rag_prompt: str = ""
+    direct_answer: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -55,6 +58,7 @@ class NodeOption:
             target_type=data.get("target_type", TARGET_NAVIGATE_MENU),
             target_id=str(data.get("target_id", "")),
             rag_prompt=str(data.get("rag_prompt", "")),
+            direct_answer=str(data.get("direct_answer", "")),
         )
 
 
@@ -350,86 +354,4 @@ class MenuGraph:
             "root_node_id": effective_root,
         }
 
-    @classmethod
-    def from_legacy_menu_tree(cls, menu_tree: List[dict]) -> MenuGraph:
-        """
-        Bridge: Convert legacy menu_tree format (nested children) into MenuGraph nodes.
-        This enables backward compatibility during migration.
-        """
-        graph = cls()
-        if not menu_tree:
-            return graph
 
-        counter = {"n": 100}
-
-        def _convert_node(node: dict, parent_number: str = "") -> Optional[str]:
-            node_id = str(node.get("id", f"LEGACY_{counter['n']}"))
-            counter["n"] += 10
-            children = node.get("children", [])
-            label = node.get("label", "")
-
-            # Determine menu_number
-            idx = counter.get("seq", 1)
-            if parent_number:
-                menu_number = f"{parent_number}.{idx}"
-            else:
-                menu_number = str(idx)
-
-            # Build options from children
-            options = []
-            child_seq = 1
-            for child in children:
-                child_id = str(child.get("id", f"LEGACY_{counter['n']}"))
-                child_label = child.get("label", f"Option {child_seq}")
-                child_children = child.get("children", [])
-                action_q = child.get("action_question", "")
-                direct_ans = child.get("direct_answer", "")
-
-                if child_children:
-                    target_type = TARGET_NAVIGATE_MENU
-                    rag_prompt = ""
-                elif action_q:
-                    target_type = TARGET_TRIGGER_RAG
-                    rag_prompt = action_q
-                elif direct_ans:
-                    target_type = TARGET_NAVIGATE_MENU  # Will resolve to leaf with direct_answer
-                    rag_prompt = ""
-                else:
-                    target_type = TARGET_TRIGGER_RAG
-                    rag_prompt = child_label
-
-                options.append(NodeOption(
-                    option_number=str(child_seq),
-                    button_text=child_label,
-                    target_type=target_type,
-                    target_id=child_id,
-                    rag_prompt=rag_prompt,
-                ))
-                child_seq += 1
-
-            graph_node = MenuGraphNode(
-                node_id=node_id,
-                menu_number=menu_number,
-                title=label,
-                options=options,
-                whatsapp_media={},
-                frequency=node.get("frequency", FREQ_ALWAYS),
-                direct_answer=node.get("direct_answer", ""),
-            )
-            graph.add_node(graph_node)
-
-            # Recursively convert children
-            for i, child in enumerate(children, 1):
-                counter["seq"] = i
-                _convert_node(child, menu_number)
-
-            return node_id
-
-        # Convert each root-level node
-        for i, root_node in enumerate(menu_tree, 1):
-            counter["seq"] = i
-            rid = _convert_node(root_node)
-            if i == 1 and rid:
-                graph.root_node_id = rid
-
-        return graph

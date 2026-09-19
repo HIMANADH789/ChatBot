@@ -158,7 +158,7 @@ async def get_client(client_id: str):
     db = get_db()
     client = await db[CLIENTS].find_one(
         {"client_id": client_id},
-        {"_id": 0, "settings.welcome_message": 1, "settings.theme_color": 1, "settings.menu_options": 1, "settings.menu_tree": 1, "settings.menu_graph_nodes": 1, "settings.menu_graph_root_node_id": 1, "settings.chatbot_title": 1, "name": 1},
+        {"_id": 0, "settings.welcome_message": 1, "settings.theme_color": 1, "settings.menu_graph_nodes": 1, "settings.menu_graph_root_node_id": 1, "settings.chatbot_title": 1, "name": 1},
     )
     if not client:
         raise HTTPException(404, "Client not found")
@@ -173,7 +173,7 @@ async def update_client_settings(client_id: str, settings: dict, user: dict = De
         raise HTTPException(403, "Only super admins or the institution's admin can edit settings")
     allowed = {
         "welcome_message", "system_prompt", "theme_color", "max_history_turns",
-        "menu_options", "menu_tree", "menu_graph_nodes", "menu_graph_root_node_id",
+        "menu_graph_nodes", "menu_graph_root_node_id",
         "context_images", "descriptive_rules", "chatbot_title",
         "context_mode", "context_instructions", "context_capacity",
     }
@@ -187,7 +187,7 @@ async def update_client_settings(client_id: str, settings: dict, user: dict = De
     existing_setups = (client_doc or {}).get("settings", {}).get("setups", {})
     shared_sync_keys = {
         "context_mode", "context_instructions", "context_capacity",
-        "menu_tree", "menu_graph_nodes", "menu_graph_root_node_id",
+        "menu_graph_nodes", "menu_graph_root_node_id",
         "context_images", "descriptive_rules",
     }
     for ch_name in existing_setups.keys():
@@ -415,7 +415,7 @@ async def update_setup_config(client_id: str, channel: str, body: dict, user: di
         "page_id", "page_access_token",
         "bot_token", "secret_token", "signing_secret",
         "context_mode", "context_instructions", "context_capacity",
-        "menu_tree", "context_images", "descriptive_rules",
+        "menu_graph_nodes", "menu_graph_root_node_id", "context_images", "descriptive_rules",
     }
     if is_super:
         safe_keys.update({"rate_limit_rpm", "rate_limit_rpd", "max_queries_per_session"})
@@ -433,7 +433,7 @@ async def update_setup_config(client_id: str, channel: str, body: dict, user: di
         "updated_at": datetime.now(timezone.utc),
     }
     # Bidirectional sync: sync context, menu, and rules to root settings so Admin portal stays consistent
-    shared_sync_keys = {"context_mode", "context_instructions", "context_capacity", "menu_tree", "context_images", "descriptive_rules"}
+    shared_sync_keys = {"context_mode", "context_instructions", "context_capacity", "menu_graph_nodes", "menu_graph_root_node_id", "context_images", "descriptive_rules"}
     for k in shared_sync_keys:
         if k in current and current[k] is not None:
             update_dict[f"settings.{k}"] = current[k]

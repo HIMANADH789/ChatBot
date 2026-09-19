@@ -169,14 +169,7 @@ async def compile_client_profile(client_id: str, channel: str = "widget") -> dic
         or ""
     )
 
-    if menu_graph_nodes_raw:
-        # Tenant has explicit MenuGraph nodes defined
-        menu_graph = MenuGraph.from_config(menu_graph_nodes_raw, root_node_id=menu_graph_root_id)
-    elif menu_tree:
-        # Bridge: convert legacy menu_tree to MenuGraph
-        menu_graph = MenuGraph.from_legacy_menu_tree(menu_tree)
-    else:
-        menu_graph = MenuGraph()
+    menu_graph = MenuGraph.from_config(menu_graph_nodes_raw, root_node_id=menu_graph_root_id) if menu_graph_nodes_raw else MenuGraph()
 
     # Generate version hash
     hash_payload = json.dumps({
@@ -254,8 +247,6 @@ async def get_compiled_profile(client_id: str, channel: str = "widget") -> dict:
                 root_id = stored.get("menu_graph_root_node_id") or ""
                 if nodes_raw:
                     stored["menu_graph"] = MenuGraph.from_config(nodes_raw, root_node_id=root_id)
-                elif stored.get("menu_tree"):
-                    stored["menu_graph"] = MenuGraph.from_legacy_menu_tree(stored.get("menu_tree", []))
                 else:
                     stored["menu_graph"] = MenuGraph()
             _PROFILE_CACHE[key] = stored
