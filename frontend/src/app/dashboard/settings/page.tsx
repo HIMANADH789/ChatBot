@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { api } from "@/lib/api";
-import type { ClientSettings, SubMenu, MenuNode, MenuGraphNode, ContextImage, DescriptiveRule } from "@/types";
+import type { ClientSettings, SubMenu, MenuNode, MenuGraphNode, ContextImage, DescriptiveRule, CompiledProfile } from "@/types";
 import { MenuGraphBuilder } from "@/components/MenuGraphBuilder";
 
 
@@ -99,6 +99,8 @@ export default function SettingsPage() {
   const [setups, setSetups] = useState<any[]>([]);
   const [setupConfigs, setSetupConfigs] = useState<Record<string, any>>({});
   const [savingSetups, setSavingSetups] = useState<Record<string, boolean>>({});
+  const [compiledProfile, setCompiledProfile] = useState<CompiledProfile | null>(null);
+  const [recompiling, setRecompiling] = useState(false);
 
   useEffect(() => {
     let id = getClientIdFromToken();
@@ -134,6 +136,10 @@ export default function SettingsPage() {
       });
 
       if (activeId) {
+        api.getCompiledProfile(activeId, "widget").then(res => {
+          if (res?.compiled_profile) setCompiledProfile(res.compiled_profile);
+        }).catch(() => {});
+
         api.listSetups(activeId).then(res => {
           setSetups(res.setups);
           res.setups.filter(s => s.enabled && ["whatsapp", "facebook", "telegram", "slack"].includes(s.channel)).forEach(setup => {
@@ -153,7 +159,7 @@ export default function SettingsPage() {
     setSavingSetups(prev => ({ ...prev, [channel]: true }));
     try {
       await api.updateSetupConfig(clientId, channel, setupConfigs[channel]);
-      alert(`${channel} configuration saved!`);
+      alert(`${channel} configuration saved & state machine updated!`);
     } catch (err: any) {
       alert(`Failed to save ${channel}: ` + err.message);
     } finally {
@@ -174,13 +180,34 @@ export default function SettingsPage() {
     setSaving(true);
     setError("");
     try {
-      await api.updateClientSettings(clientId, settings as unknown as Record<string, unknown>);
+      const res = await api.updateClientSettings(clientId, settings as unknown as Record<string, unknown>);
+      if ((res as any)?.compiled_profile) {
+        setCompiledProfile((res as any).compiled_profile);
+      } else {
+        const rec = await api.recompileProfile(clientId, "widget");
+        if (rec?.compiled_profile) setCompiledProfile(rec.compiled_profile);
+      }
       setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      setTimeout(() => setSaved(false), 3500);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleManualRecompile() {
+    if (!clientId) return;
+    setRecompiling(true);
+    try {
+      const rec = await api.recompileProfile(clientId, "widget");
+      if (rec?.compiled_profile) setCompiledProfile(rec.compiled_profile);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to recompile snapshot");
+    } finally {
+      setRecompiling(false);
     }
   }
 
@@ -444,17 +471,43 @@ export default function SettingsPage() {
             </div>
           </div>
 
+          {compiledProfile && (
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/70 p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-3">
+                <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                <div>
+                  <span className="font-semibold text-indigo-950 block">⚡ Active State Machine Pre-Compiled Snapshot</span>
+                  <span className="text-indigo-700 font-mono text-[11px]">
+                    Version: <span className="font-bold text-indigo-900">{compiledProfile.version_hash}</span> • Compiled At: {compiledProfile.compiled_at ? new Date(compiledProfile.compiled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : "Recently"}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={handleManualRecompile}
+                disabled={recompiling}
+                className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold transition disabled:opacity-50 shrink-0 text-xs shadow-sm flex items-center gap-1.5"
+              >
+                {recompiling ? "Recompiling..." : "⚡ Recompile Snapshot"}
+              </button>
+            </div>
+          )}
+
           {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
-          <div className="flex items-center gap-3 pt-2">
+          <div className="flex flex-wrap items-center gap-3 pt-2">
             <button
               onClick={saveSettings}
               disabled={saving}
-              className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              className="rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 shadow-sm flex items-center gap-2"
             >
-              {saving ? "Saving..." : "Save AI Persona Settings"}
+              <span>⚡</span>
+              {saving ? "Publishing & Pre-Compiling..." : "Save & Pre-Compile into State Machine"}
             </button>
-            {saved && <span className="text-sm text-green-600">Settings saved!</span>}
+            {saved && (
+              <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg">
+                ✓ Saved &amp; Pre-Compiled into State Machine (v: {compiledProfile?.version_hash || "active"})
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -618,17 +671,43 @@ export default function SettingsPage() {
             )}
           </div>
 
+          {compiledProfile && (
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/70 p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-3">
+                <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                <div>
+                  <span className="font-semibold text-indigo-950 block">⚡ Active State Machine Pre-Compiled Snapshot</span>
+                  <span className="text-indigo-700 font-mono text-[11px]">
+                    Version: <span className="font-bold text-indigo-900">{compiledProfile.version_hash}</span> • Media Assets Indexed: {compiledProfile.context_images?.length || 0} • Compiled At: {compiledProfile.compiled_at ? new Date(compiledProfile.compiled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : "Recently"}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={handleManualRecompile}
+                disabled={recompiling}
+                className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold transition disabled:opacity-50 shrink-0 text-xs shadow-sm flex items-center gap-1.5"
+              >
+                {recompiling ? "Recompiling..." : "⚡ Recompile Snapshot"}
+              </button>
+            </div>
+          )}
+
           {error && <p className="text-sm text-red-600">{error}</p>}
 
-          <div className="flex items-center gap-3 pt-2">
+          <div className="flex flex-wrap items-center gap-3 pt-2">
             <button
               onClick={saveSettings}
               disabled={saving}
-              className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              className="rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 shadow-sm flex items-center gap-2"
             >
-              {saving ? "Saving..." : "Save Context Images Settings"}
+              <span>⚡</span>
+              {saving ? "Publishing & Pre-Compiling..." : "Save & Pre-Compile Image State Machine"}
             </button>
-            {saved && <span className="text-sm text-green-600">Context Images Saved!</span>}
+            {saved && (
+              <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg">
+                ✓ Image Context Pre-Compiled into State Machine (v: {compiledProfile?.version_hash || "active"})
+              </span>
+            )}
           </div>
         </div>
       )}

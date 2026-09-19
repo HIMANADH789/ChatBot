@@ -186,6 +186,7 @@ async def update_client_settings(client_id: str, settings: dict, user: dict = De
     client_doc = await db[CLIENTS].find_one({"client_id": client_id})
     existing_setups = (client_doc or {}).get("settings", {}).get("setups", {})
     shared_sync_keys = {
+        "welcome_message", "system_prompt", "chatbot_title", "theme_color",
         "context_mode", "context_instructions", "context_capacity",
         "menu_graph_nodes", "menu_graph_root_node_id",
         "context_images", "descriptive_rules",
@@ -200,13 +201,16 @@ async def update_client_settings(client_id: str, settings: dict, user: dict = De
     # Invalidate and recompile profile snapshots across all channels
     from app.services.profile_compiler import invalidate_client_profile, compile_client_profile
     invalidate_client_profile(client_id)
+    primary_profile = None
     for ch in ALL_SETUPS:
         try:
-            await compile_client_profile(client_id, ch)
-        except Exception:
-            pass
+            p = await compile_client_profile(client_id, ch)
+            if ch == "widget" or primary_profile is None:
+                primary_profile = p
+        except Exception as e:
+            logger.debug("Async profile recompile on settings update (%s): %s", ch, e)
 
-    return {"message": "Settings updated"}
+    return {"message": "Settings updated and pre-compiled into state machine snapshot", "compiled_profile": primary_profile}
 
 
 @router.post("/{client_id}/validate-menu-graph")
@@ -414,6 +418,7 @@ async def update_setup_config(client_id: str, channel: str, body: dict, user: di
         "phone_number_id", "access_token", "app_secret", "verify_token",
         "page_id", "page_access_token",
         "bot_token", "secret_token", "signing_secret",
+        "welcome_message", "system_prompt", "chatbot_title", "theme_color",
         "context_mode", "context_instructions", "context_capacity",
         "menu_graph_nodes", "menu_graph_root_node_id", "context_images", "descriptive_rules",
     }
@@ -433,7 +438,11 @@ async def update_setup_config(client_id: str, channel: str, body: dict, user: di
         "updated_at": datetime.now(timezone.utc),
     }
     # Bidirectional sync: sync context, menu, and rules to root settings so Admin portal stays consistent
-    shared_sync_keys = {"context_mode", "context_instructions", "context_capacity", "menu_graph_nodes", "menu_graph_root_node_id", "context_images", "descriptive_rules"}
+    shared_sync_keys = {
+        "welcome_message", "system_prompt", "chatbot_title", "theme_color",
+        "context_mode", "context_instructions", "context_capacity",
+        "menu_graph_nodes", "menu_graph_root_node_id", "context_images", "descriptive_rules"
+    }
     for k in shared_sync_keys:
         if k in current and current[k] is not None:
             update_dict[f"settings.{k}"] = current[k]
