@@ -38,7 +38,8 @@ NAVIGATION_MAIN_MENU_TRIGGERS = {
     "main menu", "menu", "start", "restart", "reset", "home",
     "/reset", "/restart", "/newsession", "/clear", "/start",
     "new session", "clear session", "reset session", "restart session",
-    "reset conversation", "new chat", "start over", "clear chat", "reload session"
+    "reset conversation", "new chat", "start over", "clear chat", "reload session",
+    "🔄 restart session", "🔄 new session", "🔄 restart", "🔄 reset", "🔄 main menu"
 }
 NAVIGATION_BACK_TRIGGERS = {"back", "go back", "previous", "0"}
 
