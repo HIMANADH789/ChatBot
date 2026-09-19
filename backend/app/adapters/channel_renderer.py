@@ -29,7 +29,26 @@ from app.core.user_event import EngineResponse, BotAction, ActionType
 from app.core.menu_graph import FREQ_ONLY_ONCE
 from app.services.state_store import UserSessionState
 
-logger = logging.getLogger(__name__)
+def _extract_menu_options(menu: dict) -> list[dict]:
+    """Unified options extractor bridging MenuGraph options and MenuTree children."""
+    if not menu:
+        return []
+    options = menu.get("options", [])
+    if options:
+        return options
+    children = menu.get("children", [])
+    if children:
+        return [
+            {
+                "id": str(c.get("id") or i + 1),
+                "option_number": str(i + 1),
+                "button_text": c.get("label") or c.get("title") or f"Option {i+1}",
+                "label": c.get("label") or c.get("title") or f"Option {i+1}",
+                "target_type": "TRIGGER_RAG" if c.get("action_question") else "NAVIGATE_MENU",
+            }
+            for i, c in enumerate(children)
+        ]
+    return []
 
 
 class BaseChannelRenderer(ABC):
@@ -88,9 +107,9 @@ class WhatsAppChannelRenderer(BaseChannelRenderer):
             return response.actions
 
         actions: List[BotAction] = []
-        options = menu.get("options", [])
+        options = _extract_menu_options(menu)
         whatsapp_media = menu.get("whatsapp_media", {})
-        node_id = menu.get("node_id", "")
+        node_id = menu.get("node_id", "") or menu.get("id", "")
         frequency = menu.get("frequency", "always")
 
         # ── 1. Frequency-Gated Image Dispatch ───────────────────────────────
@@ -129,8 +148,8 @@ class WhatsAppChannelRenderer(BaseChannelRenderer):
                 "description": "",
             })
 
-        body_text = menu.get("body_text", "Please select an option:")
-        header_text = menu.get("header_text", "")
+        body_text = menu.get("body_text") or menu.get("description") or "Please select an option:"
+        header_text = menu.get("header_text") or menu.get("title") or menu.get("label") or ""
 
         # Build the interactive menu action with WhatsApp-specific truncation
         if len(wa_options) <= 3:
@@ -175,7 +194,7 @@ class WebChannelRenderer(BaseChannelRenderer):
             return response.actions
 
         actions: List[BotAction] = []
-        options = menu.get("options", [])
+        options = _extract_menu_options(menu)
 
         # Build clean JSON options for the web widget
         web_options = []
@@ -187,7 +206,7 @@ class WebChannelRenderer(BaseChannelRenderer):
             })
 
         # Clean body text (strip WhatsApp-style markdown)
-        body_text = menu.get("body_text", "Please select an option:")
+        body_text = menu.get("body_text") or menu.get("description") or "Please select an option:"
         clean_body = body_text.replace("*", "")
 
         actions.append(BotAction(
@@ -195,8 +214,8 @@ class WebChannelRenderer(BaseChannelRenderer):
             payload={
                 "body_text": clean_body,
                 "options": web_options,
-                "header_text": menu.get("header_text", ""),
-                "node_id": menu.get("node_id", ""),
+                "header_text": menu.get("header_text") or menu.get("title") or menu.get("label") or "",
+                "node_id": menu.get("node_id") or menu.get("id") or "",
             },
         ))
 
@@ -225,9 +244,9 @@ class DefaultChannelRenderer(BaseChannelRenderer):
         if not menu:
             return response.actions
 
-        options = menu.get("options", [])
-        header = menu.get("header_text", "Menu")
-        body = menu.get("body_text", "Please select an option:")
+        options = _extract_menu_options(menu)
+        header = menu.get("header_text") or menu.get("title") or menu.get("label") or "Menu"
+        body = menu.get("body_text") or menu.get("description") or "Please select an option:"
 
         # Build numbered text list
         lines = [body.replace("*", ""), ""]

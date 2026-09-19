@@ -56,9 +56,15 @@ NON_NAME_WORDS = {
     "a", "an", "the", "here", "there", "ready", "new", "student", "interested",
     "looking", "going", "trying", "asking", "wondering", "writing", "calling",
     "fine", "good", "okay", "ok", "happy", "sure", "sorry", "just", "also",
+    "can", "could", "would", "please", "want", "need", "will", "should", "may",
+    "how", "what", "where", "which", "why", "when", "is", "are", "am", "give", "show", "tell",
 }
 
-STOP_AFTER_WORDS = {"from", "in", "at", "and", "with", "for", "here", "to", "who", "seeking", "wanting"}
+STOP_AFTER_WORDS = {
+    "from", "in", "at", "and", "with", "for", "here", "to", "who", "seeking", "wanting",
+    "can", "could", "would", "please", "want", "need", "will", "should", "may",
+    "how", "what", "where", "which", "why", "when", "is", "are", "am", "give", "show", "tell",
+}
 
 def extract_user_name(text: str) -> Optional[str]:
     if not text:
