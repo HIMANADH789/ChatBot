@@ -257,6 +257,32 @@ async def test_end_to_end_hybrid_engine():
     print("[PASS] End-to-End: HybridEngine execution with zero-LLM deterministic routing passed")
 
 
+async def test_state_machine_aware_query_cache():
+    from app.utils.query_cache import generalize_response_for_cache, hydrate_cached_response
+
+    # Test 1: Generalizing state variables into placeholders
+    raw_response = "Hello Katrina! Welcome to SV Professional Institute. Here are your options."
+    context_vars = {"user_name": "Katrina"}
+    generalized = generalize_response_for_cache(raw_response, context_vars)
+    assert "{user_name}" in generalized
+    assert "Katrina" not in generalized
+
+    # Test 2: Hydrating cached template response with a new visitor's name
+    new_context = {"user_name": "Rahul"}
+    hydrated = hydrate_cached_response(generalized, new_context)
+    assert "Hello Rahul!" in hydrated
+    assert "{user_name}" not in hydrated
+
+    # Test 3: Hydrating when no user name is present in context
+    no_name_context = {}
+    hydrated_no_name = hydrate_cached_response(generalized, no_name_context)
+    assert "Hello!" in hydrated_no_name
+    assert "Katrina" not in hydrated_no_name
+    assert "Rahul" not in hydrated_no_name
+
+    print("[PASS] State-Machine Aware Semantic Cache template generalization & dynamic hydration passed")
+
+
 async def main():
     print("==================================================")
     print("Running Hybrid State-Machine & RAG Test Suite")
@@ -266,6 +292,7 @@ async def main():
     await test_layer2_state_machine_deterministic_routing()
     await test_layer4_bm25_and_reciprocal_rank_fusion()
     await test_end_to_end_hybrid_engine()
+    await test_state_machine_aware_query_cache()
     print("==================================================")
     print("ALL TESTS COMPLETED SUCCESSFULLY (100% PASS)")
     print("==================================================")

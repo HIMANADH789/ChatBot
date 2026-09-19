@@ -836,36 +836,24 @@ async def query(
         context_capacity=context_capacity,
     )
 
-    # Enhancement 6: semantic cache check
+    # Enhancement 6: State-Machine Aware Semantic Cache Check
     if settings.CACHE_ENABLED:
         query_embedding_for_cache = await embeddings.embed_query(search_query)
-        cached = await check_cache(client_id, query_embedding_for_cache)
+        cached = await check_cache(
+            client_id,
+            query_embedding_for_cache,
+            context_variables=context_variables,
+        )
         if cached:
-            logger.debug("Cache hit for query: %s", search_query[:60])
+            logger.debug("State-coherent cache hit for query: %s", search_query[:60])
             cached_resp = cached["response"]
-            # Dynamically personalize visitor greeting name in cached response
-            if active_name:
-                cached_resp = re.sub(
-                    r"\b(hello|hi|welcome|greetings)\s+[A-Za-z0-9_\-\.]+\b",
-                    lambda m: f"{m.group(1)} {active_name}",
-                    cached_resp,
-                    flags=re.IGNORECASE,
-                )
-            else:
-                cached_resp = re.sub(
-                    r"\b(hello|hi|welcome|greetings)\s+[A-Z][a-z]+\b",
-                    lambda m: f"{m.group(1)}",
-                    cached_resp,
-                    flags=re.IGNORECASE,
-                )
-
-            await add_message(session_id, "assistant", cached_resp, cached["sources"])
+            await add_message(session_id, "assistant", cached_resp, cached.get("sources", []))
             response_time = int((time.time() - start) * 1000)
-            await _log_query(client_id, session_id, message, cached_resp, cached["sources"], response_time, "cache", {}, channel=channel)
+            await _log_query(client_id, session_id, message, cached_resp, cached.get("sources", []), response_time, "cache", {}, channel=channel)
             matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm)
             return {
                 "response": cached_resp,
-                "sources": cached["sources"],
+                "sources": cached.get("sources", []),
                 "session_id": session_id,
                 "interactive_menu": matched_menu,
                 "context_images": matched_images,
@@ -938,7 +926,14 @@ Instructions:
 
     # Store in semantic cache (only cache valid non-fallback answers)
     if settings.CACHE_ENABLED and text != FALLBACK_MESSAGE and len(text) >= 20:
-        await store_cache(client_id, search_query, query_embedding_for_cache, text, all_sources)
+        await store_cache(
+            client_id,
+            search_query,
+            query_embedding_for_cache,
+            text,
+            all_sources,
+            context_variables=context_variables,
+        )
 
     matched_menu, matched_images = await _get_media_triggers(message, context, profile, history, llm)
 
@@ -1180,7 +1175,14 @@ Instructions:
     await _log_query(client_id, session_id, message, full_text, all_sources, response_time, llm.get_model_name(), {}, channel=channel)
 
     if settings.CACHE_ENABLED and query_embedding_for_cache is not None and full_text != FALLBACK_MESSAGE and len(full_text) >= 20:
-        await store_cache(client_id, search_query, query_embedding_for_cache, full_text, all_sources)
+        await store_cache(
+            client_id,
+            search_query,
+            query_embedding_for_cache,
+            full_text,
+            all_sources,
+            context_variables=context_variables,
+        )
 
     matched_menu, matched_images = await _get_media_triggers(message, context, profile, history, llm)
 
