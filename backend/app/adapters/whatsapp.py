@@ -267,41 +267,192 @@ class WhatsAppAdapter(ChannelAdapter):
         caption: Optional[str],
         config: dict,
     ) -> dict:
-        """Send an image attachment via WhatsApp, converting public Google Drive URLs to direct renderable links."""
-        from app.utils.media_url import transform_google_drive_url, extract_google_drive_file_id
+        """
+        Send an image attachment via WhatsApp.
+
+        For Google Drive URLs: downloads the image server-side, uploads it to
+        WhatsApp's Media API (POST /{phone_number_id}/media), and sends using
+        the returned media_id. This bypasses Google Drive's redirect/cookie/consent
+        walls that block WhatsApp's link-based image fetching.
+
+        For regular public URLs: sends directly using the link approach.
+        """
+        from app.utils.media_url import extract_google_drive_file_id
 
         phone_number_id = config.get("phone_number_id") or msg.metadata.get("phone_number_id")
         access_token = config.get("access_token", "")
         if not phone_number_id or not access_token or not image_url:
             return {"status": "skipped"}
 
-        # Transform Google Drive URLs to directly renderable format
-        direct_url = transform_google_drive_url(image_url)
         is_drive = extract_google_drive_file_id(image_url) is not None
-        if is_drive:
-            logger.info("Google Drive image URL transformed: %s -> %s", image_url[:80], direct_url[:80])
 
+        if is_drive:
+            # ── Google Drive: Download → Upload to WhatsApp Media API → Send via media_id ──
+            return await self._send_drive_image(
+                msg, image_url, caption, phone_number_id, access_token
+            )
+        else:
+            # ── Regular URL: Send directly via link ──
+            payload = {
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": msg.user_id,
+                "type": "image",
+                "image": {"link": image_url.strip()},
+            }
+            if caption:
+                payload["image"]["caption"] = caption[:1024]
+            return await self._post_payload(phone_number_id, access_token, payload)
+
+    async def _send_drive_image(
+        self,
+        msg: NormalizedMessage,
+        drive_url: str,
+        caption: Optional[str],
+        phone_number_id: str,
+        access_token: str,
+    ) -> dict:
+        """
+        Download a Google Drive image and send it via WhatsApp Media Upload API.
+
+        Flow:
+          1. Build multiple direct-download URL variants for the file ID
+          2. Try downloading the image bytes (with redirect following)
+          3. Upload image bytes to WhatsApp Media API → get media_id
+          4. Send message using media_id
+        """
+        from app.utils.media_url import extract_google_drive_file_id
+
+        file_id = extract_google_drive_file_id(drive_url)
+        if not file_id:
+            return {"status": "skipped", "error": "Could not extract Google Drive file ID"}
+
+        # Try multiple Google Drive direct-access URL variants
+        download_urls = [
+            f"https://drive.google.com/uc?export=download&id={file_id}",
+            f"https://drive.google.com/thumbnail?id={file_id}&sz=w1600",
+            f"https://lh3.googleusercontent.com/d/{file_id}",
+        ]
+
+        image_bytes = None
+        content_type = "image/jpeg"  # default
+        used_url = ""
+
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True, max_redirects=10) as http:
+            for url in download_urls:
+                try:
+                    resp = await http.get(url)
+                    ct = resp.headers.get("content-type", "")
+
+                    # Verify we got actual image data (not an HTML consent page)
+                    if resp.is_success and ct.startswith("image/"):
+                        image_bytes = resp.content
+                        content_type = ct.split(";")[0].strip()
+                        used_url = url
+                        logger.info(
+                            "Google Drive image downloaded: %s (%d bytes, %s)",
+                            url[:80], len(image_bytes), content_type,
+                        )
+                        break
+                    else:
+                        logger.debug(
+                            "Google Drive URL returned non-image: %s (status=%d, content-type=%s)",
+                            url[:80], resp.status_code, ct[:60],
+                        )
+                except Exception as e:
+                    logger.debug("Google Drive download failed for %s: %s", url[:60], e)
+
+        if not image_bytes:
+            logger.warning(
+                "All Google Drive download attempts failed for file_id=%s (original: %s)",
+                file_id, drive_url[:80],
+            )
+            return {
+                "status": "drive_download_failed",
+                "error": f"Could not download image from Google Drive (file_id={file_id}). "
+                         f"Ensure the file is shared as 'Anyone with the link can view'.",
+            }
+
+        # ── Upload to WhatsApp Media API ──────────────────────────────────────
+        media_id = await self._upload_media(
+            phone_number_id, access_token, image_bytes, content_type
+        )
+
+        if not media_id:
+            return {
+                "status": "media_upload_failed",
+                "error": "Failed to upload image to WhatsApp Media API",
+            }
+
+        # ── Send message using media_id ───────────────────────────────────────
         payload = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
             "to": msg.user_id,
             "type": "image",
-            "image": {
-                "link": direct_url,
-            },
+            "image": {"id": media_id},
         }
         if caption:
             payload["image"]["caption"] = caption[:1024]
 
         result = await self._post_payload(phone_number_id, access_token, payload)
-
-        # Fallback: if the primary thumbnail URL failed and this was a Drive link,
-        # retry with direct download URL
-        if is_drive and result.get("status") != "delivered":
-            from app.utils.media_url import get_direct_download_url
-            fallback_url = get_direct_download_url(image_url)
-            logger.info("Retrying Google Drive image with fallback URL: %s", fallback_url[:80])
-            payload["image"]["link"] = fallback_url
-            result = await self._post_payload(phone_number_id, access_token, payload)
-
+        result["media_id"] = media_id
+        result["drive_file_id"] = file_id
+        result["download_url"] = used_url
         return result
+
+    async def _upload_media(
+        self,
+        phone_number_id: str,
+        access_token: str,
+        image_bytes: bytes,
+        content_type: str = "image/jpeg",
+    ) -> Optional[str]:
+        """
+        Upload image bytes to WhatsApp Cloud API Media endpoint.
+
+        POST /{phone_number_id}/media
+        Content-Type: multipart/form-data
+
+        Returns the media_id string, or None on failure.
+        """
+        # Determine file extension from content type
+        ext_map = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+        }
+        ext = ext_map.get(content_type, ".jpg")
+        filename = f"image{ext}"
+
+        try:
+            async with httpx.AsyncClient(timeout=30) as http:
+                resp = await http.post(
+                    f"{GRAPH_API}/{phone_number_id}/media",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    data={
+                        "messaging_product": "whatsapp",
+                        "type": content_type,
+                    },
+                    files={
+                        "file": (filename, image_bytes, content_type),
+                    },
+                )
+
+                if resp.is_success:
+                    media_id = resp.json().get("id")
+                    logger.info(
+                        "WhatsApp media uploaded: media_id=%s (%d bytes, %s)",
+                        media_id, len(image_bytes), content_type,
+                    )
+                    return media_id
+                else:
+                    logger.error(
+                        "WhatsApp media upload failed: %d — %s",
+                        resp.status_code, resp.text[:300],
+                    )
+                    return None
+        except Exception as exc:
+            logger.exception("WhatsApp media upload error: %s", exc)
+            return None
+
