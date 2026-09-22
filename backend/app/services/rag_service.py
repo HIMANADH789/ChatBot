@@ -481,17 +481,17 @@ Return ONLY a numbered list of sub-questions, nothing else."""
 # ── Enhancement 7: Context-Adaptive RAG Query Resolution ──────────────────────
 
 _CONTEXT_REWRITE_PROMPT = """You are a precise search query reformulator for an institutional knowledge assistant.
-Given the conversation history and the latest user message, rewrite the user's latest message into a single standalone, unambiguous search query for vector retrieval.
+Given the conversation history, active user session context, and latest user message, rewrite the user's latest message into a single standalone, unambiguous search query for vector retrieval.
 
 Instructions:
-1. If the user refers to something from previous turns with pronouns ("it", "its", "they", "their", "this", "that", "those", "same"), replace them with the explicit subject/entity mentioned previously (e.g. course name, department, program, fee category).
-2. If the user asks a follow-up fragment (e.g. "what is the fee?", "how to apply?", "eligibility?", "what about hostel?"), combine it with the specific subject being discussed into a complete query (e.g. "B.Tech Computer Science fee structure", "MCA admission eligibility").
+1. If the user refers to something from previous turns with pronouns ("it", "its", "they", "their", "this", "that", "those", "same"), replace them with the explicit subject/entity mentioned previously or in the active user session context.
+2. If the user asks a follow-up fragment (e.g. "what is the fee structure?", "how to apply?", "eligibility?", "duration?"), combine it with the active interested course or qualification from the Active User Session Profile Context (e.g. "Finance & Accounting course fee structure for B.Com graduate").
 3. Specific tracking criteria for this institution:
 {context_instructions}
 4. If the latest user message is already clear, complete, and self-contained, or is a simple greeting, return it UNCHANGED.
 5. Do NOT answer the question. Do NOT add preamble or reasoning. Return ONLY the rewritten search query.
 
-Conversation history:
+{user_context_block}Conversation history:
 {history_text}
 
 Latest user message: {query}
@@ -505,6 +505,7 @@ async def _resolve_contextual_query(
     context_mode: str = "none",
     context_instructions: str = "",
     context_capacity: int = 4,
+    context_variables: Optional[dict] = None,
 ) -> str:
     """
     Context-Adaptive RAG: resolves pronouns, elided subjects, and conversational context
@@ -512,13 +513,22 @@ async def _resolve_contextual_query(
     """
     effective_mode = context_mode or "none"
 
-    if effective_mode == "none" or not history or len(history) <= 1:
+    if effective_mode == "none":
         return query
 
+    user_context_block = ""
+    if context_variables:
+        active_vars = [f"• {k.replace('_', ' ').title()}: {v}" for k, v in context_variables.items() if v]
+        if active_vars:
+            user_context_block = "Active User Session Profile Context:\n" + "\n".join(active_vars) + "\n\n"
+
+    # If history is empty but we have context_variables (e.g. interested_course / qualification)
+    if not history or len(history) <= 1:
+        if not context_variables or not any(k in context_variables for k in ("interested_course", "target_course", "qualification")):
+            return query
+
     # Trim history to context_capacity turns (each turn has user+assistant = 2 msgs)
-    history_slice = history[-(context_capacity * 2 + 1):-1]
-    if not history_slice:
-        return query
+    history_slice = history[-(context_capacity * 2 + 1):-1] if history else []
 
     # In adaptive mode, check if rewrite is needed (pronoun / fragment / elision)
     if effective_mode == "adaptive":
@@ -530,12 +540,12 @@ async def _resolve_contextual_query(
         words = re.findall(r"\b\w+\b", lower)
         has_pronoun = any(w in pronoun_triggers for w in words)
         is_fragment = len(words) <= 5 and any(w in lower for w in (
-            "fee", "cost", "eligibility", "process", "date", "deadline", "how", "what", "where",
+            "fee", "fees", "cost", "eligibility", "process", "date", "deadline", "how", "what", "where",
             "when", "apply", "criteria", "contact", "syllabus", "hostel", "cutoff", "quota", "seat",
-            "timing", "requirement", "placement", "faculty", "location", "address"
+            "timing", "requirement", "placement", "faculty", "location", "address", "structure", "duration"
         ))
         # If query is already long and has no pronoun/fragment, skip rewrite
-        if not has_pronoun and not is_fragment and len(words) > 6:
+        if not has_pronoun and not is_fragment and len(words) > 6 and not user_context_block:
             return query
 
     lines = []
@@ -545,7 +555,7 @@ async def _resolve_contextual_query(
         if content:
             lines.append(f"{role}: {content[:200]}")
     history_text = "\n".join(lines)
-    if not history_text:
+    if not history_text and not user_context_block:
         return query
 
     instructions = context_instructions.strip() if context_instructions else "Preserve specific courses, branches, departments, dates, fees, and admission criteria."
@@ -554,13 +564,14 @@ async def _resolve_contextual_query(
         await _rate_limiter.acquire()
         prompt = _CONTEXT_REWRITE_PROMPT.format(
             query=query,
-            history_text=history_text,
+            user_context_block=user_context_block,
+            history_text=history_text or "No previous history turns.",
             context_instructions=instructions,
         )
         resp = await llm.generate(prompt, temperature=0.0, max_tokens=100)
         rewritten = _clean_markdown(resp.text).strip().strip('"').strip("'")
         if rewritten and len(rewritten) >= 3 and not rewritten.lower().startswith(("here is", "i have", "rewritten", "standalone")):
-            logger.info("Contextual RAG query resolved: '%s' -> '%s'", query, rewritten)
+            logger.info("Contextual RAG query resolved: '%s' -> '%s' (user_context=%s)", query, rewritten, context_variables)
             return rewritten
     except Exception as e:
         logger.debug("Contextual query rewrite failed: %s", e)
@@ -684,13 +695,23 @@ def _build_rag_prompt(
 ) -> str:
     user_context_block = ""
     active_name = None
+    interested_course = None
+    qualification = None
     if context_variables:
         active_vars = [f"• {k.replace('_', ' ').title()}: {v}" for k, v in context_variables.items() if v]
         if active_vars:
             user_context_block = "Active User Session Profile Context (Dynamic State):\n" + "\n".join(active_vars) + "\n\n"
         active_name = context_variables.get("user_name")
+        interested_course = context_variables.get("interested_course") or context_variables.get("target_course")
+        qualification = context_variables.get("qualification") or context_variables.get("user_category")
 
     name_instruction = f"If addressing the user by name, address them as '{active_name}'." if active_name else ""
+    course_narrowing_instruction = (
+        f"MANDATORY TARGET FOCUS: The user's active interested course/domain is '{interested_course}'. "
+        f"Answer follow-up questions (fee structure, syllabus, duration, eligibility) SPECIFICALLY for '{interested_course}'. "
+        f"Do NOT output generic lists of all courses unless explicitly asked to compare all programs."
+        if interested_course else ""
+    )
 
     return f"""Context from knowledge base:
 {context}
@@ -699,7 +720,7 @@ def _build_rag_prompt(
 User question: {message}
 
 Answer guidelines:
-1. Answer using ONLY the context above. Provide complete, accurate, and direct information with high factual density. {name_instruction}
+1. Answer using ONLY the context above. Provide complete, accurate, and direct information with high factual density. {name_instruction} {course_narrowing_instruction}
 2. Presentation & Formatting:
    - Use markdown headings (## Heading) for key section labels (e.g., ## Course Overview, ## Eligibility, ## Key Topics, ## Placement Opportunities).
    - Use **bold** for important terms, names, numbers, and key facts.
@@ -835,6 +856,7 @@ async def query(
         context_mode=context_mode,
         context_instructions=context_instructions,
         context_capacity=context_capacity,
+        context_variables=context_variables,
     )
 
     # Enhancement 6: State-Machine Aware Semantic Cache Check
@@ -1073,6 +1095,7 @@ async def query_stream(
         context_mode=context_mode,
         context_instructions=context_instructions,
         context_capacity=context_capacity,
+        context_variables=context_variables,
     )
 
     # Enhancement 6: semantic cache

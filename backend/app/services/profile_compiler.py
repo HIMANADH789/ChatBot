@@ -89,18 +89,19 @@ def _build_compiled_system_prompt(
                 rules_text.append(f"  • [{title} - Type: {ttype}]: {directive}")
         sections.append("\n" + "\n".join(rules_text))
 
-    # 3. Context Carrying & Adaptive Guidelines
+    # 3. Context Memory & Adaptive Guidelines (Layer 2 & Layer 3 State Machine Architecture)
     effective_mode = context_mode or "none"
 
-    if effective_mode in ("adaptive", "full") and context_instructions:
+    if effective_mode in ("adaptive", "full"):
         sections.append(
-            f"\n### CONTEXT MEMORY & CONVERSATIONAL CONTINUITY (MANDATORY):\n"
+            f"\n### CONTEXT MEMORY & CONVERSATIONAL CONTINUITY (MANDATORY STATE MACHINE RULES):\n"
             f"- Tracking Mode: {effective_mode.upper()}\n"
-            f"- Information to actively collect, remember, and carry across all conversation turns: {context_instructions}.\n"
-            f"- Explicit Guidelines:\n"
-            f"  1. When the user introduces themselves (e.g. provides their name, qualification, or educational background), warmly acknowledge it and address them by their name in this and subsequent responses.\n"
-            f"  2. Retain this context across all follow-up questions without asking them to repeat themselves.\n"
-            f"  3. Tailor all course recommendations, career pathways, and next steps to their specific background and interests."
+            f"- Information to actively collect, remember, and carry across all conversation turns: {context_instructions or 'name, qualification, interested_course, experience_level'}.\n"
+            f"- Mandatory Architectural Rules:\n"
+            f"  1. When the Active User Session Profile Context specifies an active interested course (e.g. Finance & Accounting) or educational background (e.g. B.Com), ALL follow-up inquiries regarding fee structures, syllabus, eligibility, course duration, or placements MUST be answered specifically for that active target course/domain.\n"
+            f"  2. NEVER provide generic fee lists or list all courses indiscriminately unless the user explicitly requests to compare all available programs.\n"
+            f"  3. When the user introduces themselves or mentions their background (e.g. B.Com graduate), warmly acknowledge it, address them by name if provided, and tailor all advice specifically to their background.\n"
+            f"  4. If the user shifts interest to another course (e.g., from Finance to HR), immediately update the focus of your response to the newly selected course."
         )
 
     return "\n\n".join(sections)

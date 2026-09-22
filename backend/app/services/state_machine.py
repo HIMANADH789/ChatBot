@@ -382,33 +382,70 @@ async def refresh_dynamic_context(
     llm: Optional[Any] = None,
 ) -> UserSessionState:
     """
-    Dimension 1: Dynamic Editable State Refresher.
-    Evaluates incoming request to refresh/override dynamic user profile
-    (user_name, target_course, interest, step) turn-by-turn.
-    Guarantees that context switches (e.g. Sarah introducing themselves after Amit)
-    immediately override and persist updated state.
+    Layer 3: Dynamic Editable State Refresher (State Machine Architecture).
+    Evaluates incoming user message turn-by-turn to update dynamic session profile
+    attributes (user_name, qualification, user_category, interested_course, target_course, experience_level).
+
+    Guarantees:
+      1. Immediate context extraction (e.g., B.Com graduate -> qualification: B.Com, interested_course: Finance & Accounting).
+      2. Dynamic interest switches (e.g., user asking about HR later -> updates interested_course: Human Resources).
+      3. Persistence across the 1.5-hour session.
     """
     query = (event.payload or "").strip()
     if not query:
         return state
 
-    # 1. Dynamic User Name Extraction & Immediate Override
+    query_lower = query.lower()
+
+    # 1. Dynamic User Name Extraction
     from app.services.rag_service import extract_user_name
     extracted_name = extract_user_name(query)
     if extracted_name:
         state.context_variables["user_name"] = extracted_name
         logger.info("Dynamic State Refresher: User name updated to '%s' (session=%s)", extracted_name, state.session_id)
 
-    # 2. Dynamic Course / Interest Tracking
-    query_lower = query.lower()
-    if "ca intermediate" in query_lower or "ca inter" in query_lower:
+    # 2. Dynamic Educational Qualification & Category Extraction
+    if any(k in query_lower for k in ("bcom", "b.com", "bachelor of commerce", "b com")):
+        state.context_variables["qualification"] = "B.Com"
+        state.context_variables["user_category"] = "B.Com Graduate"
+        # B.Com defaults interested_course to Finance & Accounting unless HR is specified in this turn
+        if "hr" not in query_lower and "human resources" not in query_lower:
+            state.context_variables["interested_course"] = "Finance & Accounting"
+            state.context_variables["target_course"] = "Finance & Accounting"
+
+    elif any(k in query_lower for k in ("mcom", "m.com", "master of commerce")):
+        state.context_variables["qualification"] = "M.Com"
+        state.context_variables["user_category"] = "M.Com Graduate"
+        if "hr" not in query_lower:
+            state.context_variables["interested_course"] = "Finance & Accounting"
+            state.context_variables["target_course"] = "Finance & Accounting"
+
+    elif any(k in query_lower for k in ("bba", "mba")):
+        state.context_variables["qualification"] = "BBA/MBA"
+        state.context_variables["user_category"] = "Management Graduate"
+
+    elif any(k in query_lower for k in ("12th", "plus two", "+2", "intermediate", "inter commerce")):
+        state.context_variables["qualification"] = "12th Commerce"
+
+    # 3. Dynamic Course / Interest Tracking & Context Switching
+    if any(k in query_lower for k in ("ca intermediate", "ca inter", "ipcc")):
+        state.context_variables["interested_course"] = "CA Intermediate"
         state.context_variables["target_course"] = "CA Intermediate"
-    elif "ca foundation" in query_lower:
+    elif any(k in query_lower for k in ("ca foundation", "cpt")):
+        state.context_variables["interested_course"] = "CA Foundation"
         state.context_variables["target_course"] = "CA Foundation"
-    elif "finance" in query_lower or "f&a" in query_lower:
+    elif any(k in query_lower for k in ("finance", "accounting", "f&a", "f and a", "accounts", "r2r", "p2p", "o2c", "gl", "general ledger", "tally")):
+        state.context_variables["interested_course"] = "Finance & Accounting"
         state.context_variables["target_course"] = "Finance & Accounting"
-    elif "hr" in query_lower or "human resources" in query_lower:
+    elif any(k in query_lower for k in ("hr", "human resources", "recruitment", "payroll", "workday", "hiring", "talent acquisition")):
+        state.context_variables["interested_course"] = "Human Resources"
         state.context_variables["target_course"] = "Human Resources"
+
+    # 4. Experience Level Tracking
+    if any(k in query_lower for k in ("fresher", "fresh graduate", "passed out", "no experience", "just completed")):
+        state.context_variables["experience_level"] = "Fresher"
+    elif any(k in query_lower for k in ("experienced", "working professional", "years of exp", "currently working")):
+        state.context_variables["experience_level"] = "Experienced"
 
     # Persist updated session state to store
     await state_store.save_state(state)
