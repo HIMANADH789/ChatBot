@@ -55,7 +55,7 @@ async function streamChat(
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
   // Call backend DIRECTLY — bypasses Next.js rewrite proxy which buffers SSE responses
-  const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const backendUrl = process.env.NEXT_API_URL || "http://localhost:8000";
   const res = await fetch(`${backendUrl}/api/chat/${clientId}/stream`, {
     method: "POST",
     headers: {

@@ -7,7 +7,7 @@ import { api } from "@/lib/api";
 import type { ClientRecord, SetupSummary, MenuGraphNode } from "@/types";
 import { MenuGraphBuilder } from "@/components/MenuGraphBuilder";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const BACKEND_URL = process.env.NEXT_API_URL || "http://localhost:8000";
 
 const inputCls = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
 
