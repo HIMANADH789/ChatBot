@@ -106,6 +106,7 @@ class WhatsAppChannelRenderer(BaseChannelRenderer):
     ) -> List[BotAction]:
         menu = response.interactive_menu
         actions: List[BotAction] = []
+        seen_images: set[str] = set()
 
         if menu:
             options = _extract_menu_options(menu)
@@ -137,6 +138,7 @@ class WhatsAppChannelRenderer(BaseChannelRenderer):
                             "title": caption,
                         },
                     ))
+                    seen_images.add(image_url)
 
             # ── 2. Build Interactive Menu ───────────────────────────────────────
             # Format options for the WhatsApp adapter
@@ -173,13 +175,19 @@ class WhatsAppChannelRenderer(BaseChannelRenderer):
                 },
             ))
         else:
-            actions = list(response.actions or [])
+            for act in (response.actions or []):
+                if act.action_type == ActionType.IMAGE_MEDIA:
+                    img_path = act.payload.get("image_url") or act.payload.get("image_path", "")
+                    if img_path in seen_images:
+                        continue
+                    seen_images.add(img_path)
+                actions.append(act)
 
-        # ── 3. Include Contextual Media Images (Always if present) ────────────
+        # ── 3. Include Contextual Media Images (Deduplicated) ────────────
         if response.context_images:
             for img in response.context_images:
                 img_path = img.get("image_path") or img.get("image_url", "")
-                if img_path:
+                if img_path and img_path not in seen_images:
                     actions.append(BotAction(
                         action_type=ActionType.IMAGE_MEDIA,
                         payload={
@@ -189,6 +197,7 @@ class WhatsAppChannelRenderer(BaseChannelRenderer):
                             "title": img.get("title", ""),
                         },
                     ))
+                    seen_images.add(img_path)
 
         return actions
 

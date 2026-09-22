@@ -125,10 +125,10 @@ def format_for_whatsapp(text: str) -> str:
 
     Transformations applied:
     1. Markdown headings (## Heading) → *🏢 Heading* (bold + emoji)
-    2. Markdown bold (**text** or __text__) → *text* (WhatsApp bold)
-    3. Markdown italic (*text* that isn't already bold) → _text_
-    4. Bullet normalization: -, *, • → • (clean bullet)
-    5. Numbered lists: preserved as-is
+    2. Standalone section titles & lines ending with ':' → *emoji Section Title:*
+    3. Markdown bold (**text** or __text__) → *text* (WhatsApp bold)
+    4. Bullet labels (• Label: value) → • *Label:* value
+    5. Bullet normalization: -, *, • → • (clean bullet) and sub-bullets ◦
     6. Code backticks: stripped (not supported in WhatsApp)
     7. Horizontal rules (---) → removed
     8. Excessive newlines → condensed
@@ -141,6 +141,9 @@ def format_for_whatsapp(text: str) -> str:
 
     for line in lines:
         stripped = line.strip()
+        if not stripped:
+            formatted_lines.append("")
+            continue
 
         # Skip horizontal rules
         if re.match(r"^[-*_]{3,}\s*$", stripped):
@@ -150,7 +153,6 @@ def format_for_whatsapp(text: str) -> str:
         heading_match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
         if heading_match:
             heading_text = heading_match.group(2).strip()
-            # Remove any existing markdown bold markers from heading
             heading_text = re.sub(r"\*{1,2}(.+?)\*{1,2}", r"\1", heading_text)
             emoji = _get_heading_emoji(heading_text)
             if emoji:
@@ -160,7 +162,6 @@ def format_for_whatsapp(text: str) -> str:
             continue
 
         # ── Bold line detection (standalone bold heading-like text) ─────
-        # Lines that are entirely bold: **Some Heading** or *Some Heading*
         bold_line_match = re.match(r"^\*{1,2}([^*]+)\*{1,2}$", stripped)
         if bold_line_match:
             inner = bold_line_match.group(1).strip()
@@ -171,36 +172,56 @@ def format_for_whatsapp(text: str) -> str:
                 formatted_lines.append(f"*{inner}*")
             continue
 
+        # ── Standalone Section Heading Detection ──────────────────────────
+        # Short lines (<= 50 chars) ending with ':' or looking like major title section labels
+        title_colon_match = re.match(r"^([A-Z0-9\s&/\-()]{2,45}):$", stripped, re.IGNORECASE)
+        if title_colon_match:
+            title_text = title_colon_match.group(1).strip()
+            emoji = _get_heading_emoji(title_text)
+            prefix = f"*{emoji} " if emoji else "*"
+            formatted_lines.append(f"{prefix}{title_text}:*")
+            continue
+
+        # Short title-cased or uppercase line without terminal punctuation (e.g. "Programs Available")
+        if len(stripped) <= 45 and not stripped.endswith((".", "?", "!", ",", ";")) and not re.match(r"^[-*+•◦0-9]", stripped):
+            if any(k in stripped.lower() for k in ("available", "overview", "program", "course", "finance", "hr", "accounting", "eligibility", "content", "welcome", "institute", "details", "features", "highlights", "placement", "fees", "contact", "about", "training", "curriculum")):
+                emoji = _get_heading_emoji(stripped)
+                prefix = f"*{emoji} " if emoji else "*"
+                formatted_lines.append(f"{prefix}{stripped}*")
+                continue
+
         # ── Inline markdown bold → WhatsApp bold ──────────────────────
-        # **text** or __text__ → *text*
         processed = re.sub(r"\*\*(.+?)\*\*", r"*\1*", stripped)
         processed = re.sub(r"__(.+?)__", r"*\1*", processed)
 
         # ── Strip backtick code markers ───────────────────────────────
         processed = re.sub(r"`(.+?)`", r"\1", processed)
 
-        # ── Bullet normalization ──────────────────────────────────────
-        # Normalize markdown bullets (-, *, +) to clean • bullets
-        bullet_match = re.match(r"^(\s*)[-*+]\s+(.+)$", processed)
+        # ── Bullet normalization & Label Bolding ─────────────────────
+        bullet_match = re.match(r"^(\s*)([-*+•◦])\s+(.+)$", processed)
         if bullet_match:
             indent = bullet_match.group(1)
-            content = bullet_match.group(2)
-            # Sub-bullets (indented) use ◦
+            content = bullet_match.group(3).strip()
+
+            # Format bullet key-value labels: e.g. "Eligibility: Graduated..." -> "*Eligibility:* Graduated..."
+            label_match = re.match(r"^([A-Za-z0-9\s&/\-()]{2,30}:)(.+)$", content)
+            if label_match and not content.startswith("*"):
+                lbl = label_match.group(1).strip()
+                rest = label_match.group(2).strip()
+                sub_emoji = _get_heading_emoji(lbl)
+                lbl_str = f"*{sub_emoji} {lbl}*" if sub_emoji else f"*{lbl}*"
+                content = f"{lbl_str} {rest}"
+
+            # Sub-bullets (indented) use ◦, main bullets use •
             if len(indent) >= 2:
                 processed = f"  ◦ {content}"
             else:
                 processed = f"• {content}"
 
-        # ── Numbered list: keep as-is ─────────────────────────────────
-        # (already clean)
-
         formatted_lines.append(processed)
 
     result = "\n".join(formatted_lines)
-
-    # Condense excessive newlines (3+ → 2)
     result = re.sub(r"\n{3,}", "\n\n", result)
-
     return result.strip()
 
 
