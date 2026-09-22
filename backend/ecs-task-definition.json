@@ -1,0 +1,138 @@
+{
+  "family": "chatbot-backend",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::669394142262:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "chatbot-backend",
+      "image": "669394142262.dkr.ecr.ap-south-1.amazonaws.com/chatbot-backend@sha256:02f56f8c1be106b273b072aee40441d633cc95e2c480c9c7f8e347f6747cf9c9",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "hostPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "MONGODB_DB_NAME",
+          "value": "ChatBot"
+        },
+        {
+          "name": "LLM_PROVIDER",
+          "value": "gemini"
+        },
+        {
+          "name": "EMBEDDING_PROVIDER",
+          "value": "huggingface"
+        },
+        {
+          "name": "VECTORDB_PROVIDER",
+          "value": "mongodb"
+        },
+        {
+          "name": "GEMINI_MODEL",
+          "value": "models/gemini-pro-latest"
+        },
+        {
+          "name": "GROQ_MODEL",
+          "value": "groq/compound"
+        },
+        {
+          "name": "HUGGINGFACE_MODEL",
+          "value": "sentence-transformers/all-MiniLM-L6-v2"
+        },
+        {
+          "name": "HYDE_ENABLED",
+          "value": "true"
+        },
+        {
+          "name": "RERANK_ENABLED",
+          "value": "true"
+        },
+        {
+          "name": "CACHE_ENABLED",
+          "value": "true"
+        },
+        {
+          "name": "CACHE_SIMILARITY_THRESHOLD",
+          "value": "0.85"
+        },
+        {
+          "name": "CACHE_TTL_HOURS",
+          "value": "24"
+        },
+        {
+          "name": "RETRIEVAL_CANDIDATES",
+          "value": "30"
+        },
+        {
+          "name": "RETRIEVAL_TOP_K",
+          "value": "8"
+        },
+        {
+          "name": "GEMINI_RPM_LIMIT",
+          "value": "10"
+        },
+        {
+          "name": "GEMINI_DAILY_LIMIT",
+          "value": "250"
+        },
+        {
+          "name": "JWT_EXPIRY_HOURS",
+          "value": "24"
+        },
+        {
+          "name": "ALLOWED_ORIGINS",
+          "value": "http://localhost:3000,http://127.0.0.1:5500,https://synap-desk.vercel.app"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "MONGODB_URI",
+          "valueFrom": "arn:aws:secretsmanager:ap-south-1:669394142262:secret:chatbot/production-04c9pA:MONGODB_URI::"
+        },
+        {
+          "name": "GEMINI_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:ap-south-1:669394142262:secret:chatbot/production-04c9pA:GEMINI_API_KEY::"
+        },
+        {
+          "name": "GROQ_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:ap-south-1:669394142262:secret:chatbot/production-04c9pA:GROQ_API_KEY::"
+        },
+        {
+          "name": "JWT_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:ap-south-1:669394142262:secret:chatbot/production-04c9pA:JWT_SECRET::"
+        },
+        {
+          "name": "PLATFORM_SETUP_KEY",
+          "valueFrom": "arn:aws:secretsmanager:ap-south-1:669394142262:secret:chatbot/production-04c9pA:PLATFORM_SETUP_KEY::"
+        }
+      ],
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "curl -f http://localhost:8000/healthz || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/chatbot-backend",
+          "awslogs-region": "ap-south-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

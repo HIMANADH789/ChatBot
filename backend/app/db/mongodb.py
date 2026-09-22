@@ -17,35 +17,21 @@ _db: AsyncIOMotorDatabase | None = None
 
 async def connect_db() -> None:
     global _client, _db
+
     uri = settings.MONGODB_URI
-    try:
-        _client = AsyncIOMotorClient(
-            uri,
-            maxPoolSize=50,
-            minPoolSize=10,
-            serverSelectionTimeoutMS=5000,
-            connectTimeoutMS=10000,
-            socketTimeoutMS=10000,
-            tls=True,
-            tlsAllowInvalidCertificates=False,
-        )
-        # Verify connection
-        await _client.admin.command("ping")
-    except Exception:
-        # Fallback for Windows DNS SRV timeout issues
-        if "cluster0.y77ij.mongodb.net" in uri:
-            direct_uri = "mongodb://himanadhkondabathini:dbpass@cluster0-shard-00-00.y77ij.mongodb.net:27017,cluster0-shard-00-01.y77ij.mongodb.net:27017,cluster0-shard-00-02.y77ij.mongodb.net:27017/ChatBot?ssl=true&replicaSet=atlas-biwqwp-shard-0&authSource=admin&retryWrites=true&w=majority"
-            _client = AsyncIOMotorClient(
-                direct_uri,
-                maxPoolSize=50,
-                minPoolSize=10,
-                serverSelectionTimeoutMS=8000,
-                connectTimeoutMS=10000,
-                socketTimeoutMS=10000,
-                tls=True,
-            )
-        else:
-            raise
+
+    _client = AsyncIOMotorClient(
+        uri,
+        maxPoolSize=50,
+        minPoolSize=10,
+        serverSelectionTimeoutMS=5000,
+        connectTimeoutMS=10000,
+        socketTimeoutMS=10000,
+        tls=True,
+        tlsAllowInvalidCertificates=False,
+    )
+
+    await _client.admin.command("ping")
     _db = _client[settings.MONGODB_DB_NAME]
 
 
