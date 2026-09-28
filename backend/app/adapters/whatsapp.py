@@ -304,6 +304,46 @@ class WhatsAppAdapter(ChannelAdapter):
                 payload["image"]["caption"] = caption[:1024]
             return await self._post_payload(phone_number_id, access_token, payload)
 
+    async def send_location_message(
+        self,
+        msg: NormalizedMessage,
+        latitude: Optional[float],
+        longitude: Optional[float],
+        name: str,
+        address: str,
+        config: dict,
+        google_maps_url: Optional[str] = "",
+    ) -> dict:
+        """
+        Send a location pin via WhatsApp Cloud API.
+        POST /{phone_number_id}/messages with type: location
+        If coordinates are missing but google_maps_url/address exists, sends a formatted text message.
+        """
+        phone_number_id = config.get("phone_number_id") or msg.metadata.get("phone_number_id")
+        access_token = config.get("access_token", "")
+        if not phone_number_id or not access_token:
+            return {"status": "skipped"}
+
+        if latitude is not None and longitude is not None:
+            payload = {
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": msg.user_id,
+                "type": "location",
+                "location": {
+                    "latitude": float(latitude),
+                    "longitude": float(longitude),
+                    "name": (name or "Location")[:100],
+                    "address": (address or "")[:1000],
+                },
+            }
+            return await self._post_payload(phone_number_id, access_token, payload)
+        else:
+            loc_text = f"📍 *{name}*\n{address}"
+            if google_maps_url:
+                loc_text += f"\n\n🗺️ Google Maps: {google_maps_url}"
+            return await self.send_response(msg, loc_text, config)
+
     async def _send_drive_image(
         self,
         msg: NormalizedMessage,

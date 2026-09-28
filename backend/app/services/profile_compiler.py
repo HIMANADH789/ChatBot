@@ -42,6 +42,7 @@ def _build_compiled_system_prompt(
     base_prompt: str,
     menu_tree: list[dict],
     context_images: list[dict],
+    context_maps: list[dict],
     descriptive_rules: list[dict],
     context_mode: str,
     context_instructions: str,
@@ -49,7 +50,7 @@ def _build_compiled_system_prompt(
     """
     Compile a unified, high-performance system prompt incorporating:
     - Base assistant persona
-    - Inbuilt descriptive tags registry (menus & media awareness)
+    - Inbuilt descriptive tags registry (menus, images & map/location awareness)
     - Client descriptive trigger policies
     - Context carrying directives
     """
@@ -74,6 +75,15 @@ def _build_compiled_system_prompt(
             tag = img.get("descriptor_tag", "")
             path = img.get("image_path", "")
             descriptors.append(f"  • Image '{title}' ({path}): Trigger when '{tag}'")
+
+    if context_maps:
+        descriptors.append("Contextual Location / Map Assets available to attach:")
+        for m in context_maps:
+            title = m.get("title", "")
+            tag = m.get("descriptor_tag", "")
+            addr = m.get("address", "")
+            maps_url = m.get("google_maps_url", "")
+            descriptors.append(f"  • Map/Location '{title}' ({addr}) [Maps: {maps_url}]: Trigger when '{tag}'")
 
     if descriptors:
         sections.append("\nINBUILT DESCRIPTIVE TAGS & AVAILABLE ASSETS:\n" + "\n".join(descriptors))
@@ -128,11 +138,12 @@ async def compile_client_profile(client_id: str, channel: str = "widget") -> dic
     )
 
     # Normalize menu tree
-    from app.services.context_media_service import normalize_menu_tree
+    from app.services.context_media_service import normalize_menu_tree, get_context_maps
     menu_tree = normalize_menu_tree(settings, setup_cfg)
 
-    # Context images
+    # Context images and maps
     context_images = setup_cfg.get("context_images") or settings.get("context_images") or []
+    context_maps = get_context_maps(settings, setup_cfg)
 
     # Descriptive rules
     descriptive_rules = setup_cfg.get("descriptive_rules") or settings.get("descriptive_rules") or []
@@ -148,6 +159,7 @@ async def compile_client_profile(client_id: str, channel: str = "widget") -> dic
         base_prompt=base_prompt,
         menu_tree=menu_tree,
         context_images=context_images,
+        context_maps=context_maps,
         descriptive_rules=descriptive_rules,
         context_mode=context_mode,
         context_instructions=context_instructions,
@@ -178,6 +190,7 @@ async def compile_client_profile(client_id: str, channel: str = "widget") -> dic
         "menu_count": len(menu_tree),
         "graph_node_count": menu_graph.node_count,
         "image_count": len(context_images),
+        "map_count": len(context_maps),
         "rule_count": len(descriptive_rules),
         "mode": context_mode,
     }, sort_keys=True)
@@ -198,6 +211,7 @@ async def compile_client_profile(client_id: str, channel: str = "widget") -> dic
         "menu_graph_nodes": menu_graph_nodes_raw,
         "menu_graph_root_node_id": menu_graph_root_id or menu_graph.root_node_id,
         "context_images": context_images,
+        "context_maps": context_maps,
         "descriptive_rules": descriptive_rules,
         "context_config": {
             "mode": context_mode,

@@ -106,12 +106,15 @@ async def _get_media_triggers(message: str, context: str, profile: dict, history
     from app.services.context_media_service import (
         evaluate_menu_triggers,
         evaluate_image_triggers,
+        evaluate_map_triggers,
     )
     menu_tree = profile.get("menu_tree", [])
     context_imgs = profile.get("context_images", [])
+    context_maps = profile.get("context_maps", [])
     matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm)
     matched_images = await evaluate_image_triggers(message, context, context_imgs, history, llm, context_variables=context_variables)
-    return matched_menu, matched_images
+    matched_maps = await evaluate_map_triggers(message, context, context_maps, history, llm, context_variables=context_variables)
+    return matched_menu, matched_images, matched_maps
 
 
 def _clean_markdown(text: str) -> str:
@@ -821,11 +824,14 @@ async def query(
         from app.services.context_media_service import (
             evaluate_menu_triggers,
             evaluate_image_triggers,
+            evaluate_map_triggers,
         )
         menu_tree = profile.get("menu_tree", [])
         context_imgs = profile.get("context_images", [])
+        context_maps = profile.get("context_maps", [])
         matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm)
         matched_images = await evaluate_image_triggers(message, "", context_imgs, history, llm, context_variables=context_variables)
+        matched_maps = await evaluate_map_triggers(message, "", context_maps, history, llm, context_variables=context_variables)
 
         if matched_menu:
             label = matched_menu.get("label") or matched_menu.get("title") or "our options"
@@ -838,6 +844,7 @@ async def query(
             "session_id": session_id,
             "interactive_menu": matched_menu,
             "context_images": matched_images,
+            "context_maps": matched_maps,
         }
 
     can_proceed = await _rate_limiter.acquire()
@@ -875,13 +882,14 @@ async def query(
             await add_message(session_id, "assistant", cached_resp, cached.get("sources", []))
             response_time = int((time.time() - start) * 1000)
             await _log_query(client_id, session_id, message, cached_resp, cached.get("sources", []), response_time, "cache", {}, channel=channel)
-            matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
+            matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
             return {
                 "response": cached_resp,
                 "sources": cached.get("sources", []),
                 "session_id": session_id,
                 "interactive_menu": matched_menu,
                 "context_images": matched_images,
+                "context_maps": matched_maps,
             }
 
     # Retrieve + rerank
@@ -909,13 +917,14 @@ Instructions:
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, text, [], response_time, llm_response.model, llm_response.usage, channel=channel)
 
-        matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
+        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
         return {
             "response": text,
             "sources": [],
             "session_id": session_id,
             "interactive_menu": matched_menu,
             "context_images": matched_images,
+            "context_maps": matched_maps,
         }
 
     # Enhancement 1: clarification check
@@ -924,13 +933,14 @@ Instructions:
         await add_message(session_id, "assistant", clarification)
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, clarification, [], response_time, llm.get_model_name(), {}, channel=channel)
-        matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
+        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
         return {
             "response": clarification,
             "sources": [],
             "session_id": session_id,
             "interactive_menu": matched_menu,
             "context_images": matched_images,
+            "context_maps": matched_maps,
         }
 
     context = "\n\n---\n\n".join(c["text"] for c in top_candidates)
@@ -960,7 +970,7 @@ Instructions:
             context_variables=context_variables,
         )
 
-    matched_menu, matched_images = await _get_media_triggers(message, context, profile, history, llm, context_variables=context_variables)
+    matched_menu, matched_images, matched_maps = await _get_media_triggers(message, context, profile, history, llm, context_variables=context_variables)
 
     return {
         "response": text,
@@ -968,6 +978,7 @@ Instructions:
         "session_id": session_id,
         "interactive_menu": matched_menu,
         "context_images": matched_images,
+        "context_maps": matched_maps,
     }
 
 
@@ -1061,14 +1072,7 @@ async def query_stream(
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, full_text, [], response_time, model_name, {}, channel=channel)
 
-        from app.services.context_media_service import (
-            evaluate_menu_triggers,
-            evaluate_image_triggers,
-        )
-        menu_tree = profile.get("menu_tree", [])
-        context_imgs = profile.get("context_images", [])
-        matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm)
-        matched_images = await evaluate_image_triggers(message, "", context_imgs, history, llm)
+        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
 
         yield {
             "type": "done",
@@ -1076,6 +1080,7 @@ async def query_stream(
             "sources": [],
             "interactive_menu": matched_menu,
             "context_images": matched_images,
+            "context_maps": matched_maps,
         }
         return
 
@@ -1110,7 +1115,7 @@ async def query_stream(
             await add_message(session_id, "assistant", cached["response"], cached["sources"])
             response_time = int((time.time() - start) * 1000)
             await _log_query(client_id, session_id, message, cached["response"], cached["sources"], response_time, "cache", {}, channel=channel)
-            matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm)
+            matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
             yield {"type": "token", "text": cached["response"]}
             yield {
                 "type": "done",
@@ -1118,6 +1123,7 @@ async def query_stream(
                 "sources": cached["sources"],
                 "interactive_menu": matched_menu,
                 "context_images": matched_images,
+                "context_maps": matched_maps,
             }
             return
 
@@ -1151,13 +1157,14 @@ Instructions:
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, full_text, [], response_time, llm.get_model_name(), {}, channel=channel)
 
-        matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm)
+        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
         yield {
             "type": "done",
             "session_id": session_id,
             "sources": [],
             "interactive_menu": matched_menu,
             "context_images": matched_images,
+            "context_maps": matched_maps,
         }
         return
 
@@ -1167,7 +1174,7 @@ Instructions:
         await add_message(session_id, "assistant", clarification)
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, clarification, [], response_time, llm.get_model_name(), {}, channel=channel)
-        matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm)
+        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
         yield {"type": "token", "text": clarification}
         yield {
             "type": "done",
@@ -1175,6 +1182,7 @@ Instructions:
             "sources": [],
             "interactive_menu": matched_menu,
             "context_images": matched_images,
+            "context_maps": matched_maps,
         }
         return
 
@@ -1210,7 +1218,7 @@ Instructions:
             context_variables=context_variables,
         )
 
-    matched_menu, matched_images = await _get_media_triggers(message, context, profile, history, llm)
+    matched_menu, matched_images, matched_maps = await _get_media_triggers(message, context, profile, history, llm, context_variables=context_variables)
 
     yield {
         "type": "done",
@@ -1218,6 +1226,7 @@ Instructions:
         "sources": all_sources,
         "interactive_menu": matched_menu,
         "context_images": matched_images,
+        "context_maps": matched_maps,
     }
 
 

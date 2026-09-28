@@ -380,16 +380,18 @@ async def refresh_dynamic_context(
     state: UserSessionState,
     history: list,
     llm: Optional[Any] = None,
+    tenant_profile: Optional[Dict[str, Any]] = None,
 ) -> UserSessionState:
     """
     Layer 3: Dynamic Editable State Refresher (State Machine Architecture).
     Evaluates incoming user message turn-by-turn to update dynamic session profile
-    attributes (user_name, qualification, user_category, interested_course, target_course, experience_level).
+    attributes (user_name, qualification, user_category, interested_course, target_course, experience_level, etc.)
+    governed by tenant-level context instructions and platform state rules.
 
     Guarantees:
       1. Immediate context extraction (e.g., B.Com graduate -> qualification: B.Com, interested_course: Finance & Accounting).
       2. Dynamic interest switches (e.g., user asking about HR later -> updates interested_course: Human Resources).
-      3. Persistence across the 1.5-hour session.
+      3. Persistence across the session.
     """
     query = (event.payload or "").strip()
     if not query:
@@ -408,24 +410,29 @@ async def refresh_dynamic_context(
     if any(k in query_lower for k in ("bcom", "b.com", "bachelor of commerce", "b com")):
         state.context_variables["qualification"] = "B.Com"
         state.context_variables["user_category"] = "B.Com Graduate"
-        # B.Com defaults interested_course to Finance & Accounting unless HR is specified in this turn
-        if "hr" not in query_lower and "human resources" not in query_lower:
+        # B.Com defaults interested_course to Finance & Accounting unless HR or CA is specified in this turn
+        if not any(k in query_lower for k in ("hr", "human resources", "ca", "chartered accountancy")):
             state.context_variables["interested_course"] = "Finance & Accounting"
             state.context_variables["target_course"] = "Finance & Accounting"
 
     elif any(k in query_lower for k in ("mcom", "m.com", "master of commerce")):
         state.context_variables["qualification"] = "M.Com"
         state.context_variables["user_category"] = "M.Com Graduate"
-        if "hr" not in query_lower:
+        if not any(k in query_lower for k in ("hr", "human resources", "ca")):
             state.context_variables["interested_course"] = "Finance & Accounting"
             state.context_variables["target_course"] = "Finance & Accounting"
 
-    elif any(k in query_lower for k in ("bba", "mba")):
+    elif any(k in query_lower for k in ("bba", "mba", "bms", "pgdm")):
         state.context_variables["qualification"] = "BBA/MBA"
         state.context_variables["user_category"] = "Management Graduate"
 
-    elif any(k in query_lower for k in ("12th", "plus two", "+2", "intermediate", "inter commerce")):
+    elif any(k in query_lower for k in ("12th", "plus two", "+2", "intermediate", "inter commerce", "puc")):
         state.context_variables["qualification"] = "12th Commerce"
+        state.context_variables["user_category"] = "12th Student"
+
+    elif any(k in query_lower for k in ("btech", "b.tech", "be", "b.e", "engineering", "bsc", "b.sc", "ba", "b.a")):
+        state.context_variables["qualification"] = "Graduate (Non-Commerce)"
+        state.context_variables["user_category"] = "Non-Commerce Graduate"
 
     # 3. Dynamic Course / Interest Tracking & Context Switching
     if any(k in query_lower for k in ("ca intermediate", "ca inter", "ipcc")):
@@ -442,10 +449,34 @@ async def refresh_dynamic_context(
         state.context_variables["target_course"] = "Human Resources"
 
     # 4. Experience Level Tracking
-    if any(k in query_lower for k in ("fresher", "fresh graduate", "passed out", "no experience", "just completed")):
+    if any(k in query_lower for k in ("fresher", "fresh graduate", "passed out", "no experience", "just completed", "student")):
         state.context_variables["experience_level"] = "Fresher"
-    elif any(k in query_lower for k in ("experienced", "working professional", "years of exp", "currently working")):
+    elif any(k in query_lower for k in ("experienced", "working professional", "years of exp", "currently working", "working in")):
         state.context_variables["experience_level"] = "Experienced"
+
+    # 5. Optional LLM Extraction for Tenant Custom Context Rules (if configured)
+    context_instructions = ""
+    if tenant_profile and isinstance(tenant_profile, dict):
+        context_instructions = tenant_profile.get("context_config", {}).get("instructions", "")
+
+    if llm and context_instructions and len(query.split()) > 5:
+        # Check if user query contains custom statements beyond standard heuristics
+        try:
+            extract_prompt = f"""Extract dynamic user session context variables from the message according to the tenant instructions.
+Tenant Instructions: {context_instructions}
+Current Session Context: {json.dumps(state.context_variables)}
+User Message: "{query}"
+
+Output ONLY a JSON object with any newly extracted or updated string keys/values, or empty object {{}} if none:"""
+            res = await llm.generate(extract_prompt, temperature=0.0, max_tokens=100)
+            clean_res = res.text.strip().strip("```json").strip("```").strip()
+            if clean_res.startswith("{") and clean_res.endswith("}"):
+                updates = json.loads(clean_res)
+                for k, v in updates.items():
+                    if isinstance(v, str) and v.strip() and v.lower() != "null":
+                        state.context_variables[k] = v.strip()
+        except Exception as e:
+            logger.debug("Dynamic LLM context extraction skipped: %s", e)
 
     # Persist updated session state to store
     await state_store.save_state(state)

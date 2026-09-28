@@ -87,12 +87,34 @@ async def main():
         }
     ]
 
+    context_maps = [
+        {
+            "id": "sv_campus_location",
+            "title": "SV Professional Institute Campus",
+            "address": "4th Floor, SV Towers, Metro Pillar 1024, Beside Ameerpet Metro Station, Ameerpet, Hyderabad, Telangana 500038",
+            "latitude": 17.4375,
+            "longitude": 78.4482,
+            "google_maps_url": "https://maps.google.com/?q=17.4375,78.4482",
+            "descriptor_tag": "Campus location, address, office location, how to visit or reach",
+            "caption": "SV Professional Institute Ameerpet Campus",
+            "frequency": "on_intent",
+        }
+    ]
+
     settings = client.get("settings", {})
     setups = settings.get("setups", {})
     for ch, s_cfg in setups.items():
         if isinstance(s_cfg, dict):
             s_cfg["menu_graph_nodes"] = menu_graph_nodes
             s_cfg["context_images"] = context_images
+            s_cfg["context_maps"] = context_maps
+            s_cfg["context_mode"] = "adaptive"
+            s_cfg["context_instructions"] = (
+                "Track student name, educational qualification (e.g. B.Com/M.Com/BBA/12th), "
+                "interested course domain (e.g. Finance & Accounting, Human Resources, or CA), and experience level. "
+                "When a student's profile indicates B.Com or Finance & Accounting interest, answer fee structure, "
+                "eligibility, syllabus, and placement inquiries specifically for Finance & Accounting."
+            )
             if "menu_tree" in s_cfg:
                 del s_cfg["menu_tree"]
 
@@ -104,11 +126,20 @@ async def main():
                 "settings.menu_graph_nodes": menu_graph_nodes,
                 "settings.menu_graph_root_node_id": "MENU_ROOT",
                 "settings.context_images": context_images,
+                "settings.context_maps": context_maps,
+                "settings.context_mode": "adaptive",
+                "settings.context_instructions": (
+                    "Track student name, educational qualification (e.g. B.Com/M.Com/BBA/12th), "
+                    "interested course domain (e.g. Finance & Accounting, Human Resources, or CA), and experience level. "
+                    "When a student's profile indicates B.Com or Finance & Accounting interest, answer fee structure, "
+                    "eligibility, syllabus, and placement inquiries specifically for Finance & Accounting."
+                ),
                 "settings.setups": setups,
             },
             "$unset": {
                 "settings.menu_tree": "",
-                "menu_tree": ""
+                "menu_tree": "",
+                "settings.compiled_profiles": "",
             }
         }
     )

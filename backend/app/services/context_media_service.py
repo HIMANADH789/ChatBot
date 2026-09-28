@@ -79,6 +79,11 @@ def get_context_images(settings: dict, setup_cfg: dict) -> list[dict]:
     return setup_cfg.get("context_images") or settings.get("context_images") or []
 
 
+def get_context_maps(settings: dict, setup_cfg: dict) -> list[dict]:
+    """Retrieve context maps/locations list from setup config or settings."""
+    return setup_cfg.get("context_maps") or settings.get("context_maps") or []
+
+
 def _was_node_shown_in_history(node_id_or_label: str, history: list) -> bool:
     """Check if a menu node or label was already shown in the session history."""
     if not history:
@@ -111,6 +116,24 @@ def _was_image_shown_in_history(image_id_or_path: str, history: list) -> bool:
         # Check content ONLY for explicit media link / filename tag
         content = str(msg.get("content", "")).lower()
         if (f"[image:" in content or f"/static/" in content or f"http" in content) and basename in content:
+            return True
+    return False
+
+
+def _was_map_shown_in_history(map_id_or_title: str, history: list) -> bool:
+    """Check if a map/location was already sent in the session history."""
+    if not history or not map_id_or_title:
+        return False
+    target = map_id_or_title.lower().strip()
+    for msg in history:
+        msg_maps = msg.get("maps") or msg.get("context_maps") or []
+        for m in msg_maps:
+            if isinstance(m, dict):
+                m_title = str(m.get("title") or m.get("id", "")).lower()
+                if target in m_title:
+                    return True
+        content = str(msg.get("content", "")).lower()
+        if target in content and any(k in content for k in ("map", "location", "address", "directions")):
             return True
     return False
 
@@ -238,11 +261,12 @@ async def evaluate_image_triggers(
     context_images: list[dict],
     history: list,
     llm: LLMProvider,
+    context_variables: Optional[dict] = None,
 ) -> list[dict]:
     """
     Evaluate if any configured contextual image should be triggered for this turn.
     Prompt directives in descriptor_tag (e.g. "at start", "once per session", "on fee inquiry")
-    are dynamically evaluated by the state machine and LLM evaluator.
+    and dynamic session context variables (e.g. interested_course) are evaluated.
     """
     if not context_images or not query:
         return []
@@ -253,10 +277,19 @@ async def evaluate_image_triggers(
         g in query_lower for g in ("hello", "hi", "hey", "greetings", "good morning", "good afternoon", "start")
     )
     is_explicit_request = any(
-        k in query_lower for k in ("image", "photo", "chart", "map", "brochure", "diagram", "show", "view", "send")
+        k in query_lower for k in ("image", "photo", "chart", "picture", "brochure", "diagram", "show", "view", "send")
     )
 
+    active_course = ""
+    if context_variables:
+        active_course = (
+            context_variables.get("interested_course")
+            or context_variables.get("target_course")
+            or ""
+        ).lower()
+
     matched = []
+    seen_paths = set()
 
     stop_words = {
         "when", "user", "asks", "about", "inquires", "inquiry", "wants", "view",
@@ -265,7 +298,8 @@ async def evaluate_image_triggers(
         "coaching", "training", "academy", "overall", "what", "are", "the", "with", "at", "sv",
         "and", "or", "for", "in", "on", "of", "to",
         "is", "it", "by", "from", "an", "a", "as", "also", "can", "you", "give", "me", "tell", "us",
-        "display", "show"
+        "display", "show", "fee", "fees", "cost", "price", "installment", "structure",
+        "syllabus", "duration", "overview", "curriculum", "placement", "brochure", "info", "information"
     }
 
     for img in context_images:
@@ -273,7 +307,7 @@ async def evaluate_image_triggers(
         tag = (img.get("descriptor_tag") or "").strip()
         title = (img.get("title") or "").strip()
 
-        if not path:
+        if not path or path in seen_paths:
             continue
 
         was_shown = _was_image_shown_in_history(path, history) or _was_image_shown_in_history(title, history)
@@ -287,9 +321,41 @@ async def evaluate_image_triggers(
         # Directive 2: Start of conversation directive
         if is_start_or_greeting and any(k in tag_lower for k in ("start", "greeting", "welcome", "initial", "first turn", "beginning")):
             matched.append(img)
+            seen_paths.add(path)
             continue
 
-        # Directive 3: Abbreviation & Course Keyword Matching (F&A, Finance, Accounting, HR, CA)
+        # Directive 3: Dynamic State Machine Context Match (e.g. active interested_course)
+        # If user asks a follow-up (fees, syllabus, duration, brochure) and session has active interested_course
+        is_followup = any(k in query_lower for k in (
+            "fee", "fees", "cost", "syllabus", "duration", "eligibility", "structure",
+            "brochure", "details", "overview", "curriculum", "placement", "timing", "batch"
+        ))
+        if active_course and is_followup:
+            if any(k in active_course for k in ("finance", "accounting", "f&a")) and any(k in title.lower() or k in tag_lower for k in ("finance", "accounting", "f&a")):
+                matched.append(img)
+                seen_paths.add(path)
+                continue
+            elif any(k in active_course for k in ("hr", "human resources")) and any(k in title.lower() or k in tag_lower for k in ("hr", "human resources")):
+                matched.append(img)
+                seen_paths.add(path)
+                continue
+            elif any(k in active_course for k in ("ca", "commerce")) and any(k in title.lower() or k in tag_lower for k in ("ca", "commerce")):
+                matched.append(img)
+                seen_paths.add(path)
+                continue
+            else:
+                # Active course is set and user is asking a generic followup, but this image belongs to a different domain
+                # and user didn't explicitly query this domain -> skip this image
+                img_is_fa = any(k in title.lower() or k in tag_lower for k in ("finance", "accounting", "f&a"))
+                img_is_hr = any(k in title.lower() or k in tag_lower for k in ("hr", "human resources"))
+                img_is_ca = any(k in title.lower() or k in tag_lower for k in ("ca", "commerce"))
+                user_asked_fa = any(k in query_lower for k in ("finance", "accounting", "f&a", "f and a"))
+                user_asked_hr = any(k in query_lower for k in ("hr", "human resources"))
+                user_asked_ca = any(k in query_lower for k in ("ca", "commerce"))
+                if (img_is_fa and not user_asked_fa) or (img_is_hr and not user_asked_hr) or (img_is_ca and not user_asked_ca):
+                    continue
+
+        # Directive 4: Abbreviation & Course Keyword Matching in query (F&A, Finance, Accounting, HR, CA)
         abbrev_matched = False
         if any(k in query_lower for k in ("f&a", "f and a", "finance", "accounting")):
             if any(k in title.lower() or k in tag_lower for k in ("f&a", "finance", "accounting")):
@@ -303,16 +369,18 @@ async def evaluate_image_triggers(
 
         if abbrev_matched:
             matched.append(img)
+            seen_paths.add(path)
             continue
 
-        # Directive 4: Direct title match in query (bidirectional)
+        # Directive 5: Direct title match in query (bidirectional)
         norm_title = title.lower().replace("&", "and").replace("/", " ")
         if norm_title and len(norm_title) >= 2:
             if norm_title in norm_query or (len(norm_query) >= 3 and norm_query in norm_title):
                 matched.append(img)
+                seen_paths.add(path)
                 continue
 
-        # Directive 5: Descriptor tag keyword overlap
+        # Directive 6: Descriptor tag keyword overlap
         if tag:
             norm_tag = tag_lower.replace("&", "and").replace("/", " ")
             tag_words = set(w for w in re.findall(r"\b\w+\b", norm_tag) if len(w) >= 2 and w not in stop_words)
@@ -320,12 +388,14 @@ async def evaluate_image_triggers(
             overlap = tag_words.intersection(query_words)
             if len(overlap) >= 1:
                 matched.append(img)
+                seen_paths.add(path)
                 continue
 
             # LLM Fallback evaluator for complex image prompt directives
             if len(query.split()) >= 2:
                 eval_prompt = f"""Evaluate if this image should be attached to answer the user message.
 User Message: "{query}"
+Active User Course Context: "{active_course}"
 Session State:
 - Start of conversation/greeting: {is_start_or_greeting}
 - Image previously shown: {was_shown}
@@ -337,7 +407,69 @@ Respond ONLY with YES or NO:"""
                     resp = await llm.generate(eval_prompt, temperature=0.0, max_tokens=10)
                     if "yes" in resp.text.lower():
                         matched.append(img)
+                        seen_paths.add(path)
                 except Exception as e:
                     logger.debug("Image directive LLM evaluation failed: %s", e)
+
+    return matched
+
+
+async def evaluate_map_triggers(
+    query: str,
+    context: str,
+    context_maps: list[dict],
+    history: list,
+    llm: LLMProvider,
+    context_variables: Optional[dict] = None,
+) -> list[dict]:
+    """
+    Evaluate if any configured location/map should be attached for this turn.
+    Triggered when user asks about location, campus address, directions, how to reach/visit,
+    or matches map descriptor tags.
+    """
+    if not context_maps or not query:
+        return []
+
+    query_lower = query.lower().strip()
+    is_explicit_location_query = any(k in query_lower for k in (
+        "location", "address", "where is", "where are you", "where located",
+        "how to reach", "directions", "map", "campus", "how to visit",
+        "visit", "office address", "branch address", "venue", "google map"
+    ))
+    is_explicit_request = any(k in query_lower for k in ("map", "location", "address", "directions"))
+
+    matched = []
+    seen_ids = set()
+
+    for m in context_maps:
+        map_id = str(m.get("id") or m.get("title", "")).strip()
+        tag = (m.get("descriptor_tag") or "").strip()
+        title = (m.get("title") or "").strip()
+        address = (m.get("address") or "").strip()
+
+        if not map_id or map_id in seen_ids:
+            continue
+
+        was_shown = _was_map_shown_in_history(map_id, history) or _was_map_shown_in_history(title, history)
+
+        # Directive 1: Already-shown suppression rule
+        if was_shown and not is_explicit_request:
+            continue
+
+        # Directive 2: Explicit location / address query
+        if is_explicit_location_query:
+            matched.append(m)
+            seen_ids.add(map_id)
+            continue
+
+        # Directive 3: Descriptor tag matching
+        if tag:
+            tag_lower = tag.lower()
+            tag_words = set(w for w in re.findall(r"\b\w+\b", tag_lower) if len(w) >= 3)
+            query_words = set(re.findall(r"\b\w+\b", query_lower))
+            if len(tag_words.intersection(query_words)) >= 2:
+                matched.append(m)
+                seen_ids.add(map_id)
+                continue
 
     return matched

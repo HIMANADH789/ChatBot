@@ -25,6 +25,7 @@ class ActionType(str, Enum):
     TEXT = "text"
     INTERACTIVE_MENU = "interactive_menu"
     IMAGE_MEDIA = "image_media"
+    LOCATION_MEDIA = "location_media"
     STATE_TRANSITION = "state_transition"
     FORM_PROMPT = "form_prompt"
     ERROR = "error"
@@ -81,5 +82,6 @@ class EngineResponse:
     sources: List[Dict[str, Any]] = field(default_factory=list)
     interactive_menu: Optional[Dict[str, Any]] = None
     context_images: List[Dict[str, Any]] = field(default_factory=list)
+    context_maps: List[Dict[str, Any]] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     response_time_ms: int = 0

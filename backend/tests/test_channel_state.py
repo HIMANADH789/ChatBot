@@ -903,5 +903,136 @@ class TestFullPipelineIntegration(unittest.TestCase):
         _run_async(_run())
 
 
+class TestDynamicStateMachineContextExtraction(unittest.TestCase):
+    """Test Level 2 & Level 3 dynamic context extraction and state machine continuity."""
+
+    def test_bcom_qualification_defaults_finance_and_accounting(self):
+        from app.core.user_event import UserEvent
+        from app.services.state_store import UserSessionState
+        from app.services.state_machine import refresh_dynamic_context
+
+        state = UserSessionState(
+            session_id="sv:wa:user1", tenant_id="sv_professionals", channel="whatsapp", user_id="user1"
+        )
+        event = UserEvent(
+            tenant_id="sv_professionals", channel="whatsapp", user_id="user1", payload="Hi I am a B.Com graduate"
+        )
+
+        async def _run():
+            res_state = await refresh_dynamic_context(event, state, history=[])
+            self.assertEqual(res_state.context_variables.get("qualification"), "B.Com")
+            self.assertEqual(res_state.context_variables.get("user_category"), "B.Com Graduate")
+            self.assertEqual(res_state.context_variables.get("interested_course"), "Finance & Accounting")
+
+        _run_async(_run())
+
+    def test_dynamic_context_switching_to_hr(self):
+        from app.core.user_event import UserEvent
+        from app.services.state_store import UserSessionState
+        from app.services.state_machine import refresh_dynamic_context
+
+        state = UserSessionState(
+            session_id="sv:wa:user2", tenant_id="sv_professionals", channel="whatsapp", user_id="user2",
+            context_variables={"qualification": "B.Com", "interested_course": "Finance & Accounting"}
+        )
+        event = UserEvent(
+            tenant_id="sv_professionals", channel="whatsapp", user_id="user2", payload="Actually what about HR courses?"
+        )
+
+        async def _run():
+            res_state = await refresh_dynamic_context(event, state, history=[])
+            self.assertEqual(res_state.context_variables.get("interested_course"), "Human Resources")
+            self.assertEqual(res_state.context_variables.get("qualification"), "B.Com")
+
+        _run_async(_run())
+
+    def test_context_map_triggers_and_whatsapp_rendering(self):
+        from app.core.user_event import EngineResponse, ActionType
+        from app.services.state_store import UserSessionState
+        from app.adapters.channel_renderer import get_channel_renderer
+        from app.services.context_media_service import evaluate_map_triggers
+
+        maps = [
+            {
+                "id": "sv_campus_map",
+                "title": "SV Professional Institute Campus",
+                "address": "4th Floor, SV Towers, Metro Pillar 1024, Ameerpet, Hyderabad",
+                "latitude": 17.4375,
+                "longitude": 78.4482,
+                "google_maps_url": "https://maps.google.com/?q=17.4375,78.4482",
+                "descriptor_tag": "Campus location, address, how to reach or visit",
+            }
+        ]
+
+        async def _run():
+            matched = await evaluate_map_triggers("where is your campus located?", "", maps, [], None)
+            self.assertEqual(len(matched), 1)
+            self.assertEqual(matched[0]["id"], "sv_campus_map")
+
+            # Test WhatsApp Channel Rendering of location action
+            resp = EngineResponse(
+                session_id="sv:wa:user3",
+                text="Here is our location",
+                context_maps=matched,
+            )
+            state = UserSessionState(
+                session_id="sv:wa:user3", tenant_id="sv_professionals", channel="whatsapp", user_id="user3"
+            )
+            renderer = get_channel_renderer("whatsapp")
+            rendered = renderer.render(resp, state)
+
+            loc_actions = [a for a in rendered.actions if a.action_type == ActionType.LOCATION_MEDIA]
+            self.assertEqual(len(loc_actions), 1)
+            self.assertEqual(loc_actions[0].payload.get("latitude"), 17.4375)
+            self.assertEqual(loc_actions[0].payload.get("longitude"), 78.4482)
+
+        _run_async(_run())
+
+    def test_context_image_focus_on_active_course(self):
+        from app.services.context_media_service import evaluate_image_triggers
+
+        images = [
+            {
+                "id": "fa_brochure",
+                "title": "Finance & Accounting",
+                "image_path": "https://drive.google.com/file/d/1tV_nFbzA2PKgp1azvxrN2uUdpmvNIkwm/view",
+                "descriptor_tag": "Finance & Accounting course fee and syllabus",
+            },
+            {
+                "id": "hr_brochure",
+                "title": "HR",
+                "image_path": "https://example.com/hr.jpg",
+                "descriptor_tag": "HR Human Resources course fee and syllabus",
+            }
+        ]
+
+        async def _run():
+            # When active context is Finance & Accounting and query is just "what is the fee structure?"
+            matched_fa = await evaluate_image_triggers(
+                "what is the fee structure?",
+                "",
+                images,
+                [],
+                None,
+                context_variables={"interested_course": "Finance & Accounting"}
+            )
+            self.assertEqual(len(matched_fa), 1)
+            self.assertEqual(matched_fa[0]["title"], "Finance & Accounting")
+
+            # When active context is Human Resources and query is "what is the fee structure?"
+            matched_hr = await evaluate_image_triggers(
+                "what is the fee structure?",
+                "",
+                images,
+                [],
+                None,
+                context_variables={"interested_course": "Human Resources"}
+            )
+            self.assertEqual(len(matched_hr), 1)
+            self.assertEqual(matched_hr[0]["title"], "HR")
+
+        _run_async(_run())
+
+
 if __name__ == "__main__":
     unittest.main()

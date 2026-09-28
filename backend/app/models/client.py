@@ -29,6 +29,7 @@ def setup_defaults(channel: str) -> dict:
         "menu_graph_nodes": [],              # Serial-numbered dynamic menu graph nodes
         "menu_graph_root_node_id": "MENU_ROOT",
         "context_images": [],                # Contextual image triggers
+        "context_maps": [],                  # Contextual location/map triggers
         "descriptive_rules": [],             # Client-configured descriptive trigger policies
     }
     if channel == "widget":
@@ -133,6 +134,18 @@ class ContextImage(BaseModel):
     frequency: str = "on_intent"          # "only_once" | "always" | "on_intent"
 
 
+class ContextMap(BaseModel):
+    id: str
+    title: str
+    address: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    google_maps_url: Optional[str] = ""
+    descriptor_tag: str                   # Context condition when this map/location should be inserted
+    caption: Optional[str] = ""
+    frequency: str = "on_intent"          # "only_once" | "always" | "on_intent"
+
+
 class DescriptiveRule(BaseModel):
     id: str
     title: str
@@ -155,6 +168,7 @@ class ClientSettings(BaseModel):
     menu_graph_nodes: list[Dict[str, Any]] = Field(default_factory=list)
     menu_graph_root_node_id: Optional[str] = "MENU_ROOT"
     context_images: list[ContextImage] = Field(default_factory=list)
+    context_maps: list[ContextMap] = Field(default_factory=list)
     descriptive_rules: list[DescriptiveRule] = Field(default_factory=list)
 
     # Pre-compiled runtime snapshot (cached in MongoDB & in-memory)

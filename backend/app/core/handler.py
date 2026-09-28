@@ -117,6 +117,22 @@ async def handle_incoming(
                     if img_url:
                         await adapter.send_image_message(msg, img_url, caption, config)
 
+                elif action.action_type == ActionType.LOCATION_MEDIA and hasattr(adapter, "send_location_message"):
+                    lat = action.payload.get("latitude")
+                    lng = action.payload.get("longitude")
+                    name = action.payload.get("name") or action.payload.get("title", "Location")
+                    address = action.payload.get("address", "")
+                    maps_url = action.payload.get("google_maps_url", "")
+                    await adapter.send_location_message(
+                        msg,
+                        latitude=lat,
+                        longitude=lng,
+                        name=name,
+                        address=address,
+                        config=config,
+                        google_maps_url=maps_url,
+                    )
+
                 elif action.action_type == ActionType.INTERACTIVE_MENU and hasattr(adapter, "send_interactive_menu"):
                     menu_opts = action.payload.get("options", [])
                     body_text = action.payload.get("body_text", "Please select an option:")

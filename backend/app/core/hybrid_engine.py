@@ -58,7 +58,10 @@ class HybridEngine:
     ) -> EngineResponse:
         start_time = time.time()
 
-        # ── Step 1: Retrieve & Refresh Dynamic Session State (Layer 2 - Dim 1) ───────
+        # ── Step 1: Load Tenant Runtime Profile (Layer 3) ─────────────────────
+        profile = await get_compiled_profile(event.tenant_id, event.channel)
+
+        # ── Step 2: Retrieve & Refresh Dynamic Session State (Layer 2 & 3) ───
         state = await state_store.get_state(
             tenant_id=event.tenant_id,
             channel=event.channel,
@@ -66,10 +69,13 @@ class HybridEngine:
         )
 
         from app.services.state_machine import refresh_dynamic_context
-        state = await refresh_dynamic_context(event=event, state=state, history=[])
-
-        # ── Step 2: Load Tenant Runtime Profile (Layer 3) ─────────────────────
-        profile = await get_compiled_profile(event.tenant_id, event.channel)
+        state = await refresh_dynamic_context(
+            event=event,
+            state=state,
+            history=[],
+            llm=llm,
+            tenant_profile=profile,
+        )
 
         # ── Step 3: Evaluate Deterministic State Machine (Layer 2) ───────────
         det_response, requires_rag, query_override = await state_machine.evaluate_event(
@@ -128,6 +134,10 @@ class HybridEngine:
         for img in matched_images:
             actions.append(BotAction(action_type=ActionType.IMAGE_MEDIA, payload=img))
 
+        matched_maps = rag_result.get("context_maps", [])
+        for m in matched_maps:
+            actions.append(BotAction(action_type=ActionType.LOCATION_MEDIA, payload=m))
+
         response = EngineResponse(
             session_id=state.session_id,
             text=rag_result.get("response", ""),
@@ -137,12 +147,13 @@ class HybridEngine:
             sources=rag_result.get("sources", []),
             interactive_menu=matched_menu,
             context_images=matched_images,
+            context_maps=matched_maps,
             metadata=event.metadata,
             response_time_ms=elapsed_ms,
         )
 
         # Apply channel-specific rendering to RAG responses that include menus or media artifacts
-        if matched_menu or matched_images:
+        if matched_menu or matched_images or matched_maps:
             renderer = get_channel_renderer(event.channel)
             response = renderer.render(response, state)
 
@@ -157,7 +168,10 @@ class HybridEngine:
     ) -> AsyncGenerator[Dict[str, Any], None]:
         start_time = time.time()
 
-        # Step 1: Retrieve & Refresh Dynamic Session State
+        # Step 1: Load Tenant Runtime Profile
+        profile = await get_compiled_profile(event.tenant_id, event.channel)
+
+        # Step 2: Retrieve & Refresh Dynamic Session State
         state = await state_store.get_state(
             tenant_id=event.tenant_id,
             channel=event.channel,
@@ -165,10 +179,13 @@ class HybridEngine:
         )
 
         from app.services.state_machine import refresh_dynamic_context
-        state = await refresh_dynamic_context(event=event, state=state, history=[])
-
-        # Step 2: Load Tenant Runtime Profile
-        profile = await get_compiled_profile(event.tenant_id, event.channel)
+        state = await refresh_dynamic_context(
+            event=event,
+            state=state,
+            history=[],
+            llm=llm,
+            tenant_profile=profile,
+        )
 
         # Step 3: Evaluate State Machine
         det_response, requires_rag, query_override = await state_machine.evaluate_event(
@@ -189,6 +206,7 @@ class HybridEngine:
                 "sources": [],
                 "interactive_menu": det_response.interactive_menu,
                 "context_images": det_response.context_images,
+                "context_maps": det_response.context_maps,
                 "is_deterministic": True,
             }
             return

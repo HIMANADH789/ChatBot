@@ -80,7 +80,7 @@ class BaseChannelRenderer(ABC):
         Process the EngineResponse through this renderer.
         Replaces the actions list with channel-specific actions.
         """
-        if not response.interactive_menu and not response.context_images:
+        if not response.interactive_menu and not response.context_images and not response.context_maps:
             return response
 
         rendered_actions = self.render_menu_actions(response, state)
@@ -94,6 +94,7 @@ class WhatsAppChannelRenderer(BaseChannelRenderer):
     """
     WhatsApp-specific renderer:
     - Image attachments sent before menu (frequency-gated)
+    - Location / map attachments dispatched natively
     - Interactive Buttons (≤3 options) or Interactive List (>3 options)
     - 20-char button text limit, 24-char list row limit
     """
@@ -107,6 +108,7 @@ class WhatsAppChannelRenderer(BaseChannelRenderer):
         menu = response.interactive_menu
         actions: List[BotAction] = []
         seen_images: set[str] = set()
+        seen_maps: set[str] = set()
 
         if menu:
             options = _extract_menu_options(menu)
@@ -181,6 +183,11 @@ class WhatsAppChannelRenderer(BaseChannelRenderer):
                     if img_path in seen_images:
                         continue
                     seen_images.add(img_path)
+                elif act.action_type == ActionType.LOCATION_MEDIA:
+                    map_key = str(act.payload.get("id") or act.payload.get("title", ""))
+                    if map_key in seen_maps:
+                        continue
+                    seen_maps.add(map_key)
                 actions.append(act)
 
         # ── 3. Include Contextual Media Images (Deduplicated) ────────────
@@ -198,6 +205,25 @@ class WhatsAppChannelRenderer(BaseChannelRenderer):
                         },
                     ))
                     seen_images.add(img_path)
+
+        # ── 4. Include Contextual Maps / Locations (Deduplicated) ────────
+        if response.context_maps:
+            for m in response.context_maps:
+                map_key = str(m.get("id") or m.get("title", ""))
+                if map_key and map_key not in seen_maps:
+                    actions.append(BotAction(
+                        action_type=ActionType.LOCATION_MEDIA,
+                        payload={
+                            "id": map_key,
+                            "title": m.get("title", "Location"),
+                            "name": m.get("title", "Location"),
+                            "address": m.get("address", ""),
+                            "latitude": m.get("latitude"),
+                            "longitude": m.get("longitude"),
+                            "google_maps_url": m.get("google_maps_url", ""),
+                        },
+                    ))
+                    seen_maps.add(map_key)
 
         return actions
 
