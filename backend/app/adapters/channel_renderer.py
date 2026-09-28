@@ -153,7 +153,12 @@ class WhatsAppChannelRenderer(BaseChannelRenderer):
                     "description": "",
                 })
 
-            body_text = menu.get("body_text") or menu.get("description") or "Please select an option:"
+            custom_body = menu.get("body_text") or menu.get("description")
+            if not custom_body and response.text and not response.text.startswith("[Menu:"):
+                body_text = response.text
+            else:
+                body_text = custom_body or "Please select an option:"
+
             header_text = menu.get("header_text") or menu.get("title") or menu.get("label") or ""
 
             # Build the interactive menu action with WhatsApp-specific truncation

@@ -146,6 +146,7 @@ async def handle_incoming(
                     )
                     send_info = res if isinstance(res, dict) else {}
                     status = send_info.get("status", "menu_sent")
+                    text_sent = True
 
                 elif action.action_type == ActionType.TEXT and not text_sent:
                     text_content = action.payload.get("text", response_text)

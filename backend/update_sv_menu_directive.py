@@ -29,15 +29,21 @@ async def main():
             "options": [
                 {
                     "option_number": "1",
-                    "button_text": "Commerce / CA",
-                    "target_type": "NAVIGATE_MENU",
-                    "target_id": "MENU_COMMERCE"
+                    "button_text": "Finance & Accounting",
+                    "target_type": "TRIGGER_RAG",
+                    "rag_prompt": "Tell about Finance and accounting course"
                 },
                 {
                     "option_number": "2",
-                    "button_text": "Admissions Info",
+                    "button_text": "HR",
                     "target_type": "TRIGGER_RAG",
-                    "rag_prompt": "What are the admission requirements, fee structure, and application process at SV Professional Institute?"
+                    "rag_prompt": "Tell about HR course"
+                },
+                {
+                    "option_number": "3",
+                    "button_text": "Experienced",
+                    "target_type": "TRIGGER_RAG",
+                    "rag_prompt": "Tell the courses provided for experienced professionals"
                 }
             ]
         },
