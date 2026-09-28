@@ -92,14 +92,19 @@ async def check_cache(
     """
     State-machine coherent cache lookup:
     Returns state-hydrated {response, sources, node_id} if a semantically similar
-    cached entry exists, otherwise None.
+    cached entry exists with matching course context, otherwise None.
     """
     db = get_db()
     cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.CACHE_TTL_HOURS)
 
+    # Determine the active course context for filtering
+    active_course = None
+    if context_variables:
+        active_course = context_variables.get("interested_course") or context_variables.get("target_course")
+
     cursor = db[QUERY_CACHE].find(
         {"client_id": client_id, "created_at": {"$gte": cutoff}},
-        {"_id": 1, "query_embedding": 1, "response": 1, "sources": 1, "node_id": 1},
+        {"_id": 1, "query_embedding": 1, "response": 1, "sources": 1, "node_id": 1, "interested_course": 1},
     ).sort("hit_count", -1).limit(_MAX_SCAN)
 
     entries = await cursor.to_list(length=_MAX_SCAN)
@@ -107,6 +112,15 @@ async def check_cache(
     best_score = 0.0
     best_entry = None
     for entry in entries:
+        # Course-context coherence check: skip entries that were cached for a
+        # different course context (e.g. don't serve HR cache to Finance user)
+        entry_course = entry.get("interested_course")
+        if active_course and entry_course and entry_course != active_course:
+            continue
+        if not active_course and entry_course:
+            # Current user has no course context but entry was course-specific — skip
+            continue
+
         sim = _cosine_similarity(query_embedding, entry["query_embedding"])
         if sim > best_score:
             best_score = sim
@@ -142,6 +156,12 @@ async def store_cache(
     """
     db = get_db()
     template_response = generalize_response_for_cache(response, context_variables)
+
+    # Persist the active course context so cache lookups can filter by course
+    interested_course = None
+    if context_variables:
+        interested_course = context_variables.get("interested_course") or context_variables.get("target_course")
+
     await db[QUERY_CACHE].insert_one({
         "client_id": client_id,
         "query_text": query_text,
@@ -149,6 +169,7 @@ async def store_cache(
         "response": template_response,
         "sources": sources,
         "node_id": active_node_id,
+        "interested_course": interested_course,
         "created_at": datetime.now(timezone.utc),
         "hit_count": 0,
         "last_hit_at": None,

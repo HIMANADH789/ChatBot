@@ -157,12 +157,17 @@ class HybridEngine:
     ) -> AsyncGenerator[Dict[str, Any], None]:
         start_time = time.time()
 
-        # Step 1 & 2: Session state and tenant profile
+        # Step 1: Retrieve & Refresh Dynamic Session State
         state = await state_store.get_state(
             tenant_id=event.tenant_id,
             channel=event.channel,
             user_id=event.user_id,
         )
+
+        from app.services.state_machine import refresh_dynamic_context
+        state = await refresh_dynamic_context(event=event, state=state, history=[])
+
+        # Step 2: Load Tenant Runtime Profile
         profile = await get_compiled_profile(event.tenant_id, event.channel)
 
         # Step 3: Evaluate State Machine

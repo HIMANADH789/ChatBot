@@ -102,7 +102,7 @@ def _is_conversational(message: str) -> bool:
     return False
 
 
-async def _get_media_triggers(message: str, context: str, profile: dict, history: list, llm: LLMProvider):
+async def _get_media_triggers(message: str, context: str, profile: dict, history: list, llm: LLMProvider, context_variables: Optional[dict] = None):
     from app.services.context_media_service import (
         evaluate_menu_triggers,
         evaluate_image_triggers,
@@ -110,7 +110,7 @@ async def _get_media_triggers(message: str, context: str, profile: dict, history
     menu_tree = profile.get("menu_tree", [])
     context_imgs = profile.get("context_images", [])
     matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm)
-    matched_images = await evaluate_image_triggers(message, context, context_imgs, history, llm)
+    matched_images = await evaluate_image_triggers(message, context, context_imgs, history, llm, context_variables=context_variables)
     return matched_menu, matched_images
 
 
@@ -720,17 +720,19 @@ def _build_rag_prompt(
 User question: {message}
 
 Answer guidelines:
-1. Answer using ONLY the context above. Provide complete, accurate, and direct information with high factual density. {name_instruction} {course_narrowing_instruction}
-2. Presentation & Formatting:
-   - Use markdown headings (## Heading) for key section labels (e.g., ## Course Overview, ## Eligibility, ## Key Topics, ## Placement Opportunities).
+1. Answer using ONLY the context above. Provide accurate and direct information. {name_instruction} {course_narrowing_instruction}
+2. RESPONSE LENGTH: Keep your answer concise — under 150 words unless the user explicitly asks for comprehensive/detailed information. Prefer clear, actionable answers.
+3. Do NOT repeat the same information or phrase multiple times. If exact data (e.g. fee amounts) is unavailable, state it ONCE clearly and suggest contacting admin.
+4. Presentation & Formatting:
+   - Use markdown headings (## Heading) for key section labels.
    - Use **bold** for important terms, names, numbers, and key facts.
    - Use bullet points (- item) for listing items, modules, criteria, or steps.
-3. Keep the response crisp, well-structured, and easy to read on mobile without losing any factual details.
-4. Speak naturally and professionally. Never use meta-phrases like "according to the context" or "the document states".
-5. Do NOT suggest contacting anyone unless the question is completely unanswerable from the context.
-6. End with a helpful, interactive follow-up question (e.g., "Would you like to know more about the fee structure, eligibility criteria, or upcoming batches?").
-7. Do NOT add a "Sources" section or mention internal document filenames.
-8. Output ONLY the direct final answer. Do NOT output <think> tags, reasoning steps, or scratchpad text."""
+5. Keep the response crisp, well-structured, and easy to read on mobile.
+6. Speak naturally and professionally. Never use meta-phrases like "according to the context" or "the document states".
+7. Do NOT suggest contacting anyone unless the question is completely unanswerable from the context.
+8. End with a brief follow-up question (e.g., "Would you like to know more about eligibility or upcoming batches?").
+9. Do NOT add a "Sources" section or mention internal document filenames.
+10. Output ONLY the direct final answer. Do NOT output <think> tags, reasoning steps, or scratchpad text."""
 
 
 # ── Public API: non-streaming ─────────────────────────────────────────────────
@@ -823,7 +825,7 @@ async def query(
         menu_tree = profile.get("menu_tree", [])
         context_imgs = profile.get("context_images", [])
         matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm)
-        matched_images = await evaluate_image_triggers(message, "", context_imgs, history, llm)
+        matched_images = await evaluate_image_triggers(message, "", context_imgs, history, llm, context_variables=context_variables)
 
         if matched_menu:
             label = matched_menu.get("label") or matched_menu.get("title") or "our options"
@@ -873,7 +875,7 @@ async def query(
             await add_message(session_id, "assistant", cached_resp, cached.get("sources", []))
             response_time = int((time.time() - start) * 1000)
             await _log_query(client_id, session_id, message, cached_resp, cached.get("sources", []), response_time, "cache", {}, channel=channel)
-            matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm)
+            matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
             return {
                 "response": cached_resp,
                 "sources": cached.get("sources", []),
@@ -898,7 +900,7 @@ Instructions:
 4. Keep the response concise, mobile-friendly (use clean bullet points if listing courses), and end with an engaging next-step question.
 5. Output ONLY the direct response. Do NOT output thinking tags (<think>...</think>) or internal reasoning."""
 
-        llm_response = await llm.generate(guidance_prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=650)
+        llm_response = await llm.generate(guidance_prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=400)
         text = _clean_markdown(llm_response.text)
         if not text or len(text.strip()) == 0:
             text = FALLBACK_MESSAGE
@@ -907,7 +909,7 @@ Instructions:
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, text, [], response_time, llm_response.model, llm_response.usage, channel=channel)
 
-        matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm)
+        matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
         return {
             "response": text,
             "sources": [],
@@ -922,7 +924,7 @@ Instructions:
         await add_message(session_id, "assistant", clarification)
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, clarification, [], response_time, llm.get_model_name(), {}, channel=channel)
-        matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm)
+        matched_menu, matched_images = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
         return {
             "response": clarification,
             "sources": [],
@@ -938,7 +940,7 @@ Instructions:
     if not can_proceed:
         llm = _get_fallback_llm(llm)
 
-    llm_response = await llm.generate(prompt, system_prompt=system_prompt, temperature=0.2, max_tokens=1024)
+    llm_response = await llm.generate(prompt, system_prompt=system_prompt, temperature=0.2, max_tokens=512)
     text = _clean_markdown(llm_response.text)
     if not text or len(text.strip()) == 0:
         text = FALLBACK_MESSAGE
@@ -958,7 +960,7 @@ Instructions:
             context_variables=context_variables,
         )
 
-    matched_menu, matched_images = await _get_media_triggers(message, context, profile, history, llm)
+    matched_menu, matched_images = await _get_media_triggers(message, context, profile, history, llm, context_variables=context_variables)
 
     return {
         "response": text,
@@ -1102,7 +1104,7 @@ async def query_stream(
     query_embedding_for_cache = None
     if settings.CACHE_ENABLED:
         query_embedding_for_cache = await embeddings.embed_query(search_query)
-        cached = await check_cache(client_id, query_embedding_for_cache)
+        cached = await check_cache(client_id, query_embedding_for_cache, context_variables=context_variables)
         if cached:
             logger.debug("Cache hit (stream) for query: %s", search_query[:60])
             await add_message(session_id, "assistant", cached["response"], cached["sources"])
@@ -1136,7 +1138,7 @@ Instructions:
 5. Output ONLY the direct response. Do NOT output thinking tags (<think>...</think>) or internal reasoning."""
 
         full_text = ""
-        raw_gen = llm.generate_stream(guidance_prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=1024)
+        raw_gen = llm.generate_stream(guidance_prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=400)
         async for chunk in _filter_thinking_stream(raw_gen):
             full_text += chunk
             yield {"type": "token", "text": chunk}
@@ -1184,7 +1186,7 @@ Instructions:
         llm = _get_fallback_llm(llm)
 
     full_text = ""
-    raw_gen = llm.generate_stream(prompt, system_prompt=system_prompt, temperature=0.2, max_tokens=1024)
+    raw_gen = llm.generate_stream(prompt, system_prompt=system_prompt, temperature=0.2, max_tokens=512)
     async for chunk in _filter_thinking_stream(raw_gen):
         full_text += chunk
         yield {"type": "token", "text": chunk}
