@@ -153,18 +153,24 @@ async def evaluate_menu_triggers(
         return None
 
     query_lower = query.lower().strip()
-    is_start_or_greeting = (not history or len(history) <= 1) or any(
-        g in query_lower for g in ("hello", "hi", "hey", "greetings", "good morning", "good afternoon", "start")
-    )
+    words = query_lower.split()
+    word_count = len(words)
+
+    # 1. Pure greeting check (e.g. "hi", "hello", "good morning", "hey") without detailed query
+    greeting_words = {"hello", "hi", "hey", "greetings", "good morning", "good afternoon", "good evening", "/start", "start", "welcome"}
+    has_greeting_keyword = any(g in query_lower for g in greeting_words)
+    is_pure_greeting = (word_count <= 4 and has_greeting_keyword)
+
+    # 2. Explicit menu or course list request
     is_explicit_request = any(
         k in query_lower for k in (
-            "menu", "options", "courses list", "programs list", "show options",
-            "what can you do", "main menu", "list of courses", "show courses",
-            "courses again", "give me list", "again", "course menu", "courses offered",
-            "courses in", "what courses", "tell me about courses", "tell about courses",
-            "courses", "programs offered"
+            "show menu", "main menu", "menu", "options", "courses list", "programs list", "show options",
+            "what can you do", "list of courses", "show courses", "courses again", "give me list",
+            "course menu", "courses offered", "programs offered", "show all courses"
         )
     )
+
+    # 3. Specific factual query / detailed inquiry check (suppresses generic menu override)
     is_specific_factual_query = any(
         k in query_lower for k in (
             "fee", "fees", "eligibility", "syllabus", "location", "address",
@@ -176,13 +182,24 @@ async def evaluate_menu_triggers(
         )
     )
 
-    # Do not trigger full menu navigation if user is asking a specific detailed query like fee/syllabus (unless explicitly requesting menu)
-    if is_specific_factual_query and not is_explicit_request:
-        logger.debug("Suppressing menu trigger for specific factual query: %s", query)
+    # 4. Detailed educational / career background inquiry (e.g. "I am Tanishka I did MBA in Cambridge...")
+    is_detailed_profile_inquiry = (
+        word_count > 4 and (
+            any(k in query_lower for k in (
+                "mba", "bcom", "b.com", "mcom", "m.com", "bba", "engineering", "graduate",
+                "years of work", "years of experience", "work in", "worked in", "amazon",
+                "skills", "career", "higher positions", "uplevel", "upgrade", "recommend"
+            )) or any(k in query_lower for k in ("can you tell me courses", "tell me courses", "which course", "what course"))
+        )
+    )
+
+    # Do not trigger generic menu override if user is asking a specific factual query or detailed profile inquiry
+    if (is_specific_factual_query or is_detailed_profile_inquiry) and not is_explicit_request:
+        logger.debug("Suppressing menu trigger for detailed inquiry/factual query: %s", query)
         return None
 
-    # First turn / greeting / course inquiry -> deliver root menu if available
-    if (is_start_or_greeting or is_explicit_request) and menu_tree:
+    # Pure greeting / explicit menu request -> deliver root menu if available
+    if (is_pure_greeting or is_explicit_request) and menu_tree:
         # Check if any specific node matches first
         for node in menu_tree:
             tag = (node.get("descriptor_tag") or "").strip().lower()
@@ -199,7 +216,7 @@ async def evaluate_menu_triggers(
         tag_lower = tag.lower()
 
         # Directive 1: Start of conversation / greeting directive
-        if is_start_or_greeting and any(k in tag_lower for k in ("start", "greeting", "welcome", "initial", "first turn", "first interaction", "beginning")):
+        if is_pure_greeting and any(k in tag_lower for k in ("start", "greeting", "welcome", "initial", "first turn", "first interaction", "beginning")):
             logger.info("Menu node '%s' triggered via start of conversation / greeting directive: '%s'", node_label, tag)
             return node
 
@@ -431,6 +448,7 @@ async def evaluate_map_triggers(
         return []
 
     query_lower = query.lower().strip()
+    is_first_chat = not history or len(history) <= 1
     is_explicit_location_query = any(k in query_lower for k in (
         "location", "address", "where is", "where are you", "where located",
         "how to reach", "directions", "map", "campus", "how to visit",
@@ -452,22 +470,30 @@ async def evaluate_map_triggers(
 
         was_shown = _was_map_shown_in_history(map_id, history) or _was_map_shown_in_history(title, history)
 
-        # Directive 1: Already-shown suppression rule
+        # Directive 1: Already-shown suppression rule (unless explicitly re-requested)
         if was_shown and not is_explicit_request:
             continue
 
-        # Directive 2: Explicit location / address query
+        tag_lower = tag.lower()
+
+        # Directive 2: First chat / initial greeting directive
+        if is_first_chat and any(k in tag_lower for k in ("first chat", "first turn", "start", "initial", "greeting", "welcome")):
+            matched.append(m)
+            seen_ids.add(map_id)
+            continue
+
+        # Directive 3: Explicit location / address query
         if is_explicit_location_query:
             matched.append(m)
             seen_ids.add(map_id)
             continue
 
-        # Directive 3: Descriptor tag matching
+        # Directive 4: Descriptor tag keyword overlap
         if tag:
-            tag_lower = tag.lower()
-            tag_words = set(w for w in re.findall(r"\b\w+\b", tag_lower) if len(w) >= 3)
+            stop_words = {"when", "user", "asks", "about", "show", "in", "and", "or", "for", "the", "with", "this", "that"}
+            tag_words = set(w for w in re.findall(r"\b\w+\b", tag_lower) if len(w) >= 3 and w not in stop_words)
             query_words = set(re.findall(r"\b\w+\b", query_lower))
-            if len(tag_words.intersection(query_words)) >= 2:
+            if len(tag_words.intersection(query_words)) >= 2 or (len(tag_words) == 1 and len(tag_words.intersection(query_words)) == 1):
                 matched.append(m)
                 seen_ids.add(map_id)
                 continue

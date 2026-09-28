@@ -96,13 +96,13 @@ async def main():
     context_maps = [
         {
             "id": "sv_campus_location",
-            "title": "SV Professional Institute Campus",
-            "address": "4th Floor, SV Towers, Metro Pillar 1024, Beside Ameerpet Metro Station, Ameerpet, Hyderabad, Telangana 500038",
-            "latitude": 17.4375,
-            "longitude": 78.4482,
-            "google_maps_url": "https://maps.google.com/?q=17.4375,78.4482",
-            "descriptor_tag": "Campus location, address, office location, how to visit or reach",
-            "caption": "SV Professional Institute Ameerpet Campus",
+            "title": "SV Professionals",
+            "address": "SV Professionals, Beside Ameerpet Metro Station, Ameerpet, Hyderabad, Telangana 500038",
+            "latitude": 17.4003212,
+            "longitude": 78.4908396,
+            "google_maps_url": "https://maps.app.goo.gl/UmU6RZw3iHLQuQYs8",
+            "descriptor_tag": "Show in first chat or initial greeting, and when asked by user for location, address, campus, directions, or how to visit",
+            "caption": "SV Professionals Hyderabad Campus Location",
             "frequency": "on_intent",
         }
     ]

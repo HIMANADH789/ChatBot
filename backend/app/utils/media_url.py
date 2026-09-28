@@ -85,3 +85,45 @@ def get_direct_download_url(url: str) -> str:
     if file_id:
         return f"https://drive.google.com/uc?export=download&id={file_id}"
     return url
+
+
+def extract_maps_coordinates(url: str) -> tuple[float, float] | None:
+    """
+    Extract latitude and longitude from Google Maps URLs.
+    Supports formats:
+      - /@17.4003212,78.4882647
+      - !3d17.4003212!4d78.4908396
+      - ?q=17.4003212,78.4882647
+      - &ll=17.4003212,78.4882647
+    """
+    if not url or not isinstance(url, str):
+        return None
+    url_str = url.strip()
+
+    # Pattern 1: @17.4003212,78.4882647
+    m = re.search(r"@(-?\d+\.\d+),(-?\d+\.\d+)", url_str)
+    if m:
+        try:
+            return float(m.group(1)), float(m.group(2))
+        except ValueError:
+            pass
+
+    # Pattern 2: !3d17.4003212!4d78.4908396
+    m_lat = re.search(r"!3d(-?\d+\.\d+)", url_str)
+    m_lng = re.search(r"!4d(-?\d+\.\d+)", url_str)
+    if m_lat and m_lng:
+        try:
+            return float(m_lat.group(1)), float(m_lng.group(1))
+        except ValueError:
+            pass
+
+    # Pattern 3: q=17.4003212,78.4882647 or ll=17.4003212,78.4882647
+    m = re.search(r"[?&](?:q|ll)=(-?\d+\.\d+),(-?\d+\.\d+)", url_str)
+    if m:
+        try:
+            return float(m.group(1)), float(m.group(2))
+        except ValueError:
+            pass
+
+    return None
+

@@ -1033,6 +1033,78 @@ class TestDynamicStateMachineContextExtraction(unittest.TestCase):
 
         _run_async(_run())
 
+    def test_experienced_student_query_handling(self):
+        """Test user profile extraction and menu suppression for detailed intro queries."""
+        from app.services.rag_service import extract_user_name
+        from app.services.state_machine import refresh_dynamic_context
+        from app.services.context_media_service import evaluate_menu_triggers, evaluate_map_triggers
+        from app.core.user_event import UserEvent, EventType
+        from app.services.state_store import UserSessionState
+
+        query = (
+            "Hello I am Tanishka I did MBA in Cambridge can you tell me courses to take in your institue, "
+            "as I already did 2 years of work in Amazon , now I want to upgrade for higher positions so tell me courses that can help me to uplevel my skills"
+        )
+
+        # 1. Test Name Extraction
+        name = extract_user_name(query)
+        self.assertEqual(name, "Tanishka")
+
+        async def _run():
+            # 2. Test Dynamic Context Extraction
+            state = UserSessionState(
+                session_id="test_sess",
+                tenant_id="sv_professionals",
+                channel="whatsapp",
+                user_id="user_123",
+            )
+            event = UserEvent(
+                tenant_id="sv_professionals",
+                channel="whatsapp",
+                user_id="user_123",
+                payload=query,
+                event_type=EventType.TEXT,
+            )
+            updated_state = await refresh_dynamic_context(event, state, [])
+            self.assertEqual(updated_state.context_variables.get("user_name"), "Tanishka")
+            self.assertEqual(updated_state.context_variables.get("qualification"), "MBA")
+            self.assertEqual(updated_state.context_variables.get("experience_level"), "Experienced")
+            self.assertEqual(updated_state.context_variables.get("years_of_experience"), "2 years")
+
+            # 3. Test evaluate_menu_triggers: Detailed query MUST NOT trigger generic MENU_ROOT
+            menu_tree = [
+                {
+                    "node_id": "MENU_ROOT",
+                    "title": "Courses & Offerings",
+                    "descriptor_tag": "Display at start of conversation or initial greeting, or when user explicitly asks for courses or menu list",
+                    "options": [{"option_number": "1", "button_text": "Experienced"}],
+                }
+            ]
+            menu_res = await evaluate_menu_triggers(query, menu_tree, [], None)
+            self.assertIsNone(menu_res, "Detailed career query should not be overridden by generic root menu")
+
+            # Pure greeting SHOULD trigger root menu
+            pure_menu_res = await evaluate_menu_triggers("Hello", menu_tree, [], None)
+            self.assertIsNotNone(pure_menu_res)
+
+            # 4. Test evaluate_map_triggers: SV short URL and first chat descriptor trigger
+            maps = [
+                {
+                    "id": "sv_campus_location",
+                    "title": "SV Professionals",
+                    "address": "SV Professionals, Beside Ameerpet Metro Station, Ameerpet, Hyderabad, Telangana 500038",
+                    "latitude": 17.4003212,
+                    "longitude": 78.4908396,
+                    "google_maps_url": "https://maps.app.goo.gl/UmU6RZw3iHLQuQYs8",
+                    "descriptor_tag": "Show in first chat or initial greeting, and when asked by user for location, address, campus, directions, or how to visit",
+                }
+            ]
+            first_chat_maps = await evaluate_map_triggers(query, "", maps, [], None)
+            self.assertEqual(len(first_chat_maps), 1)
+            self.assertEqual(first_chat_maps[0]["google_maps_url"], "https://maps.app.goo.gl/UmU6RZw3iHLQuQYs8")
+
+        _run_async(_run())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,7 +16,9 @@ Input Evaluation Pipeline:
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.user_event import UserEvent, EventType, EngineResponse, BotAction, ActionType
@@ -422,9 +424,9 @@ async def refresh_dynamic_context(
             state.context_variables["interested_course"] = "Finance & Accounting"
             state.context_variables["target_course"] = "Finance & Accounting"
 
-    elif any(k in query_lower for k in ("bba", "mba", "bms", "pgdm")):
-        state.context_variables["qualification"] = "BBA/MBA"
-        state.context_variables["user_category"] = "Management Graduate"
+    elif any(k in query_lower for k in ("bba", "mba", "bms", "pgdm", "master of business administration", "cambridge", "harvard", "iim", "isb")):
+        state.context_variables["qualification"] = "MBA" if "mba" in query_lower else "BBA/MBA"
+        state.context_variables["user_category"] = "Management / Post-Graduate"
 
     elif any(k in query_lower for k in ("12th", "plus two", "+2", "intermediate", "inter commerce", "puc")):
         state.context_variables["qualification"] = "12th Commerce"
@@ -448,11 +450,20 @@ async def refresh_dynamic_context(
         state.context_variables["interested_course"] = "Human Resources"
         state.context_variables["target_course"] = "Human Resources"
 
-    # 4. Experience Level Tracking
-    if any(k in query_lower for k in ("fresher", "fresh graduate", "passed out", "no experience", "just completed", "student")):
-        state.context_variables["experience_level"] = "Fresher"
-    elif any(k in query_lower for k in ("experienced", "working professional", "years of exp", "currently working", "working in")):
+    # 4. Experience Level & Work History Tracking
+    exp_matches = re.findall(r"\b(\d+)\+?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:work|experience|exp)\b", query_lower)
+    has_work_mention = any(k in query_lower for k in (
+        "years of work", "years of experience", "years of exp", "work in ", "work at ",
+        "worked in ", "worked at ", "working in ", "working at ", "currently working",
+        "working professional", "higher positions", "uplevel", "upgrade", "career transition",
+        "experienced", "industry experience"
+    ))
+    if exp_matches or has_work_mention:
         state.context_variables["experience_level"] = "Experienced"
+        if exp_matches:
+            state.context_variables["years_of_experience"] = f"{exp_matches[0]} years"
+    elif any(k in query_lower for k in ("fresher", "fresh graduate", "passed out", "no experience", "just completed", "student")):
+        state.context_variables["experience_level"] = "Fresher"
 
     # 5. Optional LLM Extraction for Tenant Custom Context Rules (if configured)
     context_instructions = ""

@@ -61,12 +61,16 @@ NON_NAME_WORDS = {
     "fine", "good", "okay", "ok", "happy", "sure", "sorry", "just", "also",
     "can", "could", "would", "please", "want", "need", "will", "should", "may",
     "how", "what", "where", "which", "why", "when", "is", "are", "am", "give", "show", "tell",
+    "i", "did", "have", "had", "worked", "working", "completed", "pursuing", "doing",
+    "got", "done", "passed", "graduated", "studied", "studying", "joined", "joining",
 }
 
 STOP_AFTER_WORDS = {
     "from", "in", "at", "and", "with", "for", "here", "to", "who", "seeking", "wanting",
     "can", "could", "would", "please", "want", "need", "will", "should", "may",
     "how", "what", "where", "which", "why", "when", "is", "are", "am", "give", "show", "tell",
+    "i", "did", "have", "had", "worked", "working", "completed", "pursuing", "doing",
+    "got", "done", "passed", "graduated", "studied", "studying", "joined", "joining",
 }
 
 def extract_user_name(text: str) -> Optional[str]:
@@ -897,13 +901,18 @@ async def query(
 
     if not top_candidates:
         logger.info("No vector document chunks found for query '%s'. Generating front-desk guidance via LLM.", search_query)
-        await _rate_limiter.acquire()
-        guidance_prompt = f"""{history_text}
+        user_context_block = ""
+        if context_variables:
+            active_vars = [f"• {k.replace('_', ' ').title()}: {v}" for k, v in context_variables.items() if v]
+            if active_vars:
+                user_context_block = "Active User Session Profile Context (Dynamic State):\n" + "\n".join(active_vars) + "\n\n"
+
+        guidance_prompt = f"""{user_context_block}{history_text}
 User message: {message}
 
 Instructions:
 1. You are the AI Front Desk Assistant for this institution. Follow your system prompt persona, responsibilities, and tone.
-2. If the user introduces themselves (e.g. gives their name, qualification, or educational background) or asks for career guidance, courses, or general information, address them warmly by name if provided, introduce the relevant programs offered (e.g. CA, CMA, ACCA, CS, B.Com), and explain how they can get started.
+2. If the user introduces themselves (e.g. gives their name, qualification, or educational background) or asks for career guidance, courses, or general information, address them warmly by name if provided, introduce the relevant programs offered (e.g. CA, CMA, ACCA, CS, B.Com, Finance & Accounting, HR, Executive/Professional upskilling), and explain how they can get started.
 3. If they asked for specific verified facts (such as exact rupee fee structures or official registration dates) that require official document verification and none are available, provide a helpful general overview of the program and invite them to speak with the administrative desk for the latest official fee schedules.
 4. Keep the response concise, mobile-friendly (use clean bullet points if listing courses), and end with an engaging next-step question.
 5. Output ONLY the direct response. Do NOT output thinking tags (<think>...</think>) or internal reasoning."""

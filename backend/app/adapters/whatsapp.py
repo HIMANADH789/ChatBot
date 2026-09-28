@@ -324,6 +324,20 @@ class WhatsAppAdapter(ChannelAdapter):
         if not phone_number_id or not access_token:
             return {"status": "skipped"}
 
+        from app.utils.media_url import extract_maps_coordinates
+
+        if (latitude is None or longitude is None) and google_maps_url:
+            coords = extract_maps_coordinates(google_maps_url)
+            if not coords and "goo.gl" in google_maps_url:
+                try:
+                    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as http:
+                        resp = await http.get(google_maps_url)
+                        coords = extract_maps_coordinates(str(resp.url))
+                except Exception as e:
+                    logger.debug("Failed to resolve Google Maps short URL: %s", e)
+            if coords:
+                latitude, longitude = coords
+
         if latitude is not None and longitude is not None:
             payload = {
                 "messaging_product": "whatsapp",
