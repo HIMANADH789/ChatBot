@@ -19,6 +19,7 @@ backend/chatbot-secrets.json
 # ChromaDB
 chroma_data/
 
+deploy.ps1
 # Node
 node_modules/
 .next/
