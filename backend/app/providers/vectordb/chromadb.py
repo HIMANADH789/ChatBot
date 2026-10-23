@@ -1,7 +1,11 @@
 import logging
 from typing import Optional
 
-import chromadb
+try:
+    import chromadb
+except ImportError:
+    chromadb = None  # Fallback stub; actual DB functionality requires chromadb package
+
 
 from app.providers.base import VectorStoreProvider
 

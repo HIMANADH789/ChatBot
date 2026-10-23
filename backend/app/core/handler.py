@@ -136,7 +136,12 @@ async def handle_incoming(
 
                 elif action.action_type == ActionType.TEXT:
                     text_content = action.payload.get("text", response_text)
-                    if text_content and not text_content.startswith("[Menu:"):
+                    # If any INTERACTIVE_MENU action follows, skip this TEXT to prevent duplicate menu output.
+                    has_menu_ahead = any(
+                        upcoming.action_type == ActionType.INTERACTIVE_MENU
+                        for upcoming in engine_res.actions[engine_res.actions.index(action) + 1 :]
+                    )
+                    if not has_menu_ahead and text_content and not text_content.startswith("[Menu:"):
                         res = await adapter.send_response(msg, text_content, config)
                         if isinstance(res, dict):
                             send_info = res
