@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { api } from "@/lib/api";
-import type { ClientSettings, SubMenu, MenuNode, MenuGraphNode, ContextImage, DescriptiveRule, CompiledProfile } from "@/types";
+import type { ClientSettings, SubMenu, MenuNode, MenuGraphNode, ContextImage, ContextMap, DescriptiveRule, CompiledProfile } from "@/types";
 import { MenuGraphBuilder } from "@/components/MenuGraphBuilder";
 
 
@@ -82,6 +82,7 @@ Be concise, friendly, and professional.`,
   ],
   menu_graph_root_node_id: "MENU_ROOT",
   context_images: [],
+  context_maps: [],
   descriptive_rules: [],
 };
 
@@ -93,7 +94,7 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"persona" | "menu_graph" | "context_images" | "web_config" | "channels">("persona");
+  const [activeTab, setActiveTab] = useState<"persona" | "menu_graph" | "context_images" | "context_maps" | "web_config" | "channels">("persona");
 
   const [settings, setSettings] = useState<ClientSettings>(DEFAULTS);
   const [setups, setSetups] = useState<any[]>([]);
@@ -264,6 +265,17 @@ export default function SettingsPage() {
           }`}
         >
           <span>🖼️</span> Context Images &amp; Media
+        </button>
+
+        <button
+          onClick={() => setActiveTab("context_maps")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
+            activeTab === "context_maps"
+              ? "bg-blue-600 text-white shadow-sm"
+              : "bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200"
+          }`}
+        >
+          <span>📍</span> Context Maps &amp; Locations
         </button>
 
         <button
@@ -706,6 +718,256 @@ export default function SettingsPage() {
             {saved && (
               <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg">
                 ✓ Image Context Pre-Compiled into State Machine (v: {compiledProfile?.version_hash || "active"})
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Tab 3.5: Context Maps & Location Artifacts */}
+      {activeTab === "context_maps" && (
+        <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xl">📍</span>
+                <h2 className="text-lg font-semibold text-gray-900">Context Maps &amp; Location Registry</h2>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Configure native WhatsApp location cards and Google Maps navigation artifacts. Managed with dual specification: exact geolocation data + natural LLM trigger directives.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                const newMap: ContextMap = {
+                  id: `map_${Date.now()}`,
+                  title: "SV Professionals Campus",
+                  address: "SV Professionals, Beside Ameerpet Metro Station, Ameerpet, Hyderabad, Telangana 500038",
+                  google_maps_url: "https://maps.app.goo.gl/UmU6RZw3iHLQuQYs8",
+                  latitude: 17.4003212,
+                  longitude: 78.4908396,
+                  descriptor_tag: "When user asks about campus location, address, where to visit, directions, or how to reach the institute",
+                  description: "When user asks about campus location, address, where to visit, directions, or how to reach the institute",
+                  caption: "SV Professionals Hyderabad Campus Location",
+                  frequency: "on_intent",
+                };
+                setSettings(s => ({
+                  ...s,
+                  context_maps: [...(s.context_maps || []), newMap]
+                }));
+              }}
+              className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 transition"
+            >
+              <span>+</span> Add Location / Map
+            </button>
+          </div>
+
+          <div className="rounded-xl bg-sky-50/70 border border-sky-100 p-4 text-xs text-sky-950 space-y-1.5">
+            <p className="font-semibold text-sky-900">📍 Native WhatsApp Location Pin &amp; Smart Context Engine:</p>
+            <p>• <strong>Native WhatsApp Pin:</strong> Instead of showing raw links, WhatsApp delivers an interactive map pin card that opens directions directly in Google Maps.</p>
+            <p>• <strong>Context Intelligence:</strong> The state machine delivers course offerings initially on greeting, and shares maps later when users inquire about visiting, address, or reaching the center.</p>
+            <p>• <strong>Session Memory:</strong> Prevents repeated map sending within the 1-day window, but re-delivers immediately if the user asks for directions again.</p>
+          </div>
+
+          <div className="space-y-4">
+            {(!settings.context_maps || settings.context_maps.length === 0) ? (
+              <div className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">
+                No location maps configured. Click &quot;Add Location / Map&quot; above to add your institute location.
+              </div>
+            ) : (
+              settings.context_maps.map((loc, idx) => (
+                <div key={loc.id || idx} className="rounded-xl border border-gray-200 bg-white p-5 space-y-4 shadow-sm">
+                  <div className="flex items-center justify-between gap-3 border-b border-gray-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold px-2 py-0.5 rounded bg-sky-100 text-sky-800">
+                        📍 Location Artifact #{idx + 1}
+                      </span>
+                      <span className="font-semibold text-xs text-gray-800">{loc.title || "Untitled Location"}</span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const updated = (settings.context_maps || []).filter((_, i) => i !== idx);
+                        setSettings(s => ({ ...s, context_maps: updated }));
+                      }}
+                      className="text-xs text-red-500 hover:text-red-700 font-medium hover:underline"
+                    >
+                      Delete Location
+                    </button>
+                  </div>
+
+                  {/* Part 1: Artifact Name & Part 2: Technical Specification */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">
+                        1. Location Name / Title
+                      </label>
+                      <input
+                        type="text"
+                        value={loc.title || ""}
+                        onChange={(e) => {
+                          const next = [...(settings.context_maps || [])];
+                          next[idx] = { ...loc, title: e.target.value };
+                          setSettings(s => ({ ...s, context_maps: next }));
+                        }}
+                        placeholder="e.g. SV Professionals Main Campus"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">
+                        Google Maps URL / Share Link
+                      </label>
+                      <input
+                        type="text"
+                        value={loc.google_maps_url || ""}
+                        onChange={(e) => {
+                          const next = [...(settings.context_maps || [])];
+                          next[idx] = { ...loc, google_maps_url: e.target.value };
+                          setSettings(s => ({ ...s, context_maps: next }));
+                        }}
+                        placeholder="e.g. https://maps.app.goo.gl/UmU6RZw3iHLQuQYs8"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs font-mono focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">
+                        Physical Campus Address
+                      </label>
+                      <input
+                        type="text"
+                        value={loc.address || ""}
+                        onChange={(e) => {
+                          const next = [...(settings.context_maps || [])];
+                          next[idx] = { ...loc, address: e.target.value };
+                          setSettings(s => ({ ...s, context_maps: next }));
+                        }}
+                        placeholder="e.g. Beside Ameerpet Metro Station, Ameerpet, Hyderabad, Telangana 500038"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">
+                        Latitude (Decimal)
+                      </label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={loc.latitude ?? ""}
+                        onChange={(e) => {
+                          const next = [...(settings.context_maps || [])];
+                          next[idx] = { ...loc, latitude: parseFloat(e.target.value) || undefined };
+                          setSettings(s => ({ ...s, context_maps: next }));
+                        }}
+                        placeholder="e.g. 17.4003212"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs font-mono focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">
+                        Longitude (Decimal)
+                      </label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={loc.longitude ?? ""}
+                        onChange={(e) => {
+                          const next = [...(settings.context_maps || [])];
+                          next[idx] = { ...loc, longitude: parseFloat(e.target.value) || undefined };
+                          setSettings(s => ({ ...s, context_maps: next }));
+                        }}
+                        placeholder="e.g. 78.4908396"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs font-mono focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Part 3: Description for LLM Usage & Context Trigger Directives */}
+                  <div className="rounded-xl bg-slate-50 border border-slate-200 p-3.5 space-y-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-800 mb-1">
+                        🏷️ Trigger Context &amp; LLM Usage Directives (What it is &amp; When to give it)
+                      </label>
+                      <p className="text-[11px] text-slate-500 mb-1.5">
+                        Specify in natural language when the state machine should attach this map, and any instructions for the LLM (e.g. mention nearest landmark, metro gate, parking notes).
+                      </p>
+                      <textarea
+                        rows={2}
+                        value={loc.descriptor_tag || loc.description || ""}
+                        onChange={(e) => {
+                          const next = [...(settings.context_maps || [])];
+                          next[idx] = {
+                            ...loc,
+                            descriptor_tag: e.target.value,
+                            description: e.target.value,
+                          };
+                          setSettings(s => ({ ...s, context_maps: next }));
+                        }}
+                        placeholder="e.g. When user asks about campus location, address, where to visit, directions, or how to reach the institute. Mention that it is right beside Ameerpet Metro station."
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">
+                          Map Caption (Sent with WhatsApp card)
+                        </label>
+                        <input
+                          type="text"
+                          value={loc.caption || ""}
+                          onChange={(e) => {
+                            const next = [...(settings.context_maps || [])];
+                            next[idx] = { ...loc, caption: e.target.value };
+                            setSettings(s => ({ ...s, context_maps: next }));
+                          }}
+                          placeholder="e.g. SV Professionals Hyderabad Campus Location"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">
+                          Delivery Frequency
+                        </label>
+                        <select
+                          value={loc.frequency || "on_intent"}
+                          onChange={(e) => {
+                            const next = [...(settings.context_maps || [])];
+                            next[idx] = { ...loc, frequency: e.target.value };
+                            setSettings(s => ({ ...s, context_maps: next }));
+                          }}
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
+                        >
+                          <option value="on_intent">On Location Intent (Suppressed once sent, unless re-requested)</option>
+                          <option value="only_once">Strictly Once per Session Window (24h)</option>
+                          <option value="always">Always Deliver on Match</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {error && <p className="text-sm text-red-600">{error}</p>}
+
+          <div className="flex flex-wrap items-center gap-3 pt-2">
+            <button
+              onClick={saveSettings}
+              disabled={saving}
+              className="rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 shadow-sm flex items-center gap-2"
+            >
+              <span>⚡</span>
+              {saving ? "Publishing & Pre-Compiling..." : "Save & Pre-Compile Map State Machine"}
+            </button>
+            {saved && (
+              <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg">
+                ✓ Map Artifacts Pre-Compiled into State Machine (v: {compiledProfile?.version_hash || "active"})
               </span>
             )}
           </div>

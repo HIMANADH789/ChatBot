@@ -143,6 +143,7 @@ async def evaluate_menu_triggers(
     menu_tree: list[dict],
     history: list,
     llm: LLMProvider,
+    session_state: Optional[Any] = None,
 ) -> Optional[dict]:
     """
     Evaluate if any menu option's descriptor_tag directive matches the current query and state context.
@@ -166,7 +167,7 @@ async def evaluate_menu_triggers(
         k in query_lower for k in (
             "show menu", "main menu", "menu", "options", "courses list", "programs list", "show options",
             "what can you do", "list of courses", "show courses", "courses again", "give me list",
-            "course menu", "courses offered", "programs offered", "show all courses"
+            "course menu", "courses offered", "programs offered", "show all courses", "again"
         )
     )
 
@@ -198,11 +199,26 @@ async def evaluate_menu_triggers(
         logger.debug("Suppressing menu trigger for detailed inquiry/factual query: %s", query)
         return None
 
-    # Pure greeting / explicit menu request -> deliver root menu if available
-    if (is_pure_greeting or is_explicit_request) and menu_tree:
-        # Check if any specific node matches first
+    # Check if root menu has already been shown in this session
+    root_node = menu_tree[0]
+    root_id = str(root_node.get("id") or root_node.get("node_id") or "MENU_ROOT")
+    root_label = str(root_node.get("label") or root_node.get("title") or "Courses & Offerings")
+    root_was_shown = _was_node_shown_in_history(root_label, history) or _was_node_shown_in_history(root_id, history)
+    if session_state and hasattr(session_state, "was_artifact_shown"):
+        root_was_shown = root_was_shown or session_state.was_artifact_shown("menu", root_id) or session_state.was_artifact_shown("menu", root_label)
+
+    # Pure greeting -> deliver root menu ONLY on the initial greeting of the session (when not yet shown)
+    if is_pure_greeting and not root_was_shown and menu_tree:
         for node in menu_tree:
-            tag = (node.get("descriptor_tag") or "").strip().lower()
+            tag = (node.get("descriptor_tag") or node.get("description") or "").strip().lower()
+            if any(k in tag for k in ("start", "greeting", "welcome", "initial", "first turn", "beginning")):
+                return node
+        return menu_tree[0]
+
+    # Explicit menu / courses list request -> always deliver menu
+    if is_explicit_request and menu_tree:
+        for node in menu_tree:
+            tag = (node.get("descriptor_tag") or node.get("description") or "").strip().lower()
             if any(k in tag for k in ("start", "greeting", "welcome", "initial", "first turn", "beginning")):
                 return node
         return menu_tree[0]
@@ -213,10 +229,14 @@ async def evaluate_menu_triggers(
         node_id = (node.get("id") or node.get("node_id") or "").strip()
         was_shown = _was_node_shown_in_history(node_label, history) or _was_node_shown_in_history(node_id, history)
 
+        # Also check session_state for artifact deduplication
+        if session_state and hasattr(session_state, "was_artifact_shown"):
+            was_shown = was_shown or session_state.was_artifact_shown("menu", node_id) or session_state.was_artifact_shown("menu", node_label)
+
         tag_lower = tag.lower()
 
-        # Directive 1: Start of conversation / greeting directive
-        if is_pure_greeting and any(k in tag_lower for k in ("start", "greeting", "welcome", "initial", "first turn", "first interaction", "beginning")):
+        # Directive 1: Start of conversation / greeting directive (only if not already shown in this session)
+        if is_pure_greeting and not was_shown and any(k in tag_lower for k in ("start", "greeting", "welcome", "initial", "first turn", "first interaction", "beginning")):
             logger.info("Menu node '%s' triggered via start of conversation / greeting directive: '%s'", node_label, tag)
             return node
 
@@ -279,6 +299,7 @@ async def evaluate_image_triggers(
     history: list,
     llm: LLMProvider,
     context_variables: Optional[dict] = None,
+    session_state: Optional[Any] = None,
 ) -> list[dict]:
     """
     Evaluate if any configured contextual image should be triggered for this turn.
@@ -328,6 +349,9 @@ async def evaluate_image_triggers(
             continue
 
         was_shown = _was_image_shown_in_history(path, history) or _was_image_shown_in_history(title, history)
+        if session_state and hasattr(session_state, "was_artifact_shown"):
+            was_shown = was_shown or session_state.was_artifact_shown("image", path) or session_state.was_artifact_shown("image", title)
+
         tag_lower = tag.lower()
 
         # Directive 1: Already-shown suppression rule (unless explicitly requested)
@@ -438,30 +462,32 @@ async def evaluate_map_triggers(
     history: list,
     llm: LLMProvider,
     context_variables: Optional[dict] = None,
+    session_state: Optional[Any] = None,
 ) -> list[dict]:
     """
     Evaluate if any configured location/map should be attached for this turn.
     Triggered when user asks about location, campus address, directions, how to reach/visit,
-    or matches map descriptor tags.
+    or matches map descriptor tags. Suppressed if already delivered in the session unless explicitly requested.
     """
     if not context_maps or not query:
         return []
 
     query_lower = query.lower().strip()
-    is_first_chat = not history or len(history) <= 1
     is_explicit_location_query = any(k in query_lower for k in (
         "location", "address", "where is", "where are you", "where located",
         "how to reach", "directions", "map", "campus", "how to visit",
-        "visit", "office address", "branch address", "venue", "google map"
+        "visit", "office address", "branch address", "venue", "google map",
+        "where to come", "situated", "center location", "institute location",
+        "reach the institute", "offline classes location", "maps link"
     ))
-    is_explicit_request = any(k in query_lower for k in ("map", "location", "address", "directions"))
+    is_explicit_request = any(k in query_lower for k in ("map", "location", "address", "directions", "where"))
 
     matched = []
     seen_ids = set()
 
     for m in context_maps:
         map_id = str(m.get("id") or m.get("title", "")).strip()
-        tag = (m.get("descriptor_tag") or "").strip()
+        tag = (m.get("descriptor_tag") or m.get("description") or "").strip()
         title = (m.get("title") or "").strip()
         address = (m.get("address") or "").strip()
 
@@ -469,6 +495,8 @@ async def evaluate_map_triggers(
             continue
 
         was_shown = _was_map_shown_in_history(map_id, history) or _was_map_shown_in_history(title, history)
+        if session_state and hasattr(session_state, "was_artifact_shown"):
+            was_shown = was_shown or session_state.was_artifact_shown("map", map_id) or session_state.was_artifact_shown("map", title)
 
         # Directive 1: Already-shown suppression rule (unless explicitly re-requested)
         if was_shown and not is_explicit_request:
@@ -476,24 +504,18 @@ async def evaluate_map_triggers(
 
         tag_lower = tag.lower()
 
-        # Directive 2: First chat / initial greeting directive
-        if is_first_chat and any(k in tag_lower for k in ("first chat", "first turn", "start", "initial", "greeting", "welcome")):
-            matched.append(m)
-            seen_ids.add(map_id)
-            continue
-
-        # Directive 3: Explicit location / address query
+        # Directive 2: Explicit location / address query
         if is_explicit_location_query:
             matched.append(m)
             seen_ids.add(map_id)
             continue
 
-        # Directive 4: Descriptor tag keyword overlap
-        if tag:
+        # Directive 3: Descriptor tag keyword overlap for location inquiries
+        if tag and any(k in query_lower for k in ("location", "address", "where", "visit", "reach", "campus", "direction")):
             stop_words = {"when", "user", "asks", "about", "show", "in", "and", "or", "for", "the", "with", "this", "that"}
             tag_words = set(w for w in re.findall(r"\b\w+\b", tag_lower) if len(w) >= 3 and w not in stop_words)
             query_words = set(re.findall(r"\b\w+\b", query_lower))
-            if len(tag_words.intersection(query_words)) >= 2 or (len(tag_words) == 1 and len(tag_words.intersection(query_words)) == 1):
+            if len(tag_words.intersection(query_words)) >= 1:
                 matched.append(m)
                 seen_ids.add(map_id)
                 continue

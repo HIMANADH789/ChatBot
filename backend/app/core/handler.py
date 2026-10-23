@@ -109,6 +109,7 @@ async def handle_incoming(
         # Dispatch each BotAction in order (channel renderer has already
         # formatted them into the correct channel-specific payloads)
         text_sent = False
+        menu_sent = False
         for action in engine_res.actions:
             try:
                 if action.action_type == ActionType.IMAGE_MEDIA and hasattr(adapter, "send_image_message"):
@@ -133,6 +134,17 @@ async def handle_incoming(
                         google_maps_url=maps_url,
                     )
 
+                elif action.action_type == ActionType.TEXT:
+                    text_content = action.payload.get("text", response_text)
+                    if text_content and not text_content.startswith("[Menu:"):
+                        res = await adapter.send_response(msg, text_content, config)
+                        if isinstance(res, dict):
+                            send_info = res
+                            status = res.get("status", "response_sent")
+                        else:
+                            status = "response_sent"
+                        text_sent = True
+
                 elif action.action_type == ActionType.INTERACTIVE_MENU and hasattr(adapter, "send_interactive_menu"):
                     menu_opts = action.payload.get("options", [])
                     body_text = action.payload.get("body_text", "Please select an option:")
@@ -146,23 +158,12 @@ async def handle_incoming(
                     )
                     send_info = res if isinstance(res, dict) else {}
                     status = send_info.get("status", "menu_sent")
-                    text_sent = True
-
-                elif action.action_type == ActionType.TEXT and not text_sent:
-                    text_content = action.payload.get("text", response_text)
-                    if text_content:
-                        res = await adapter.send_response(msg, text_content, config)
-                        if isinstance(res, dict):
-                            send_info = res
-                            status = res.get("status", "response_sent")
-                        else:
-                            status = "response_sent"
-                        text_sent = True
+                    menu_sent = True
             except Exception as action_exc:
                 logger.warning("Failed to dispatch action %s: %s", action.action_type, action_exc)
 
-        # Fallback: if no text action was dispatched and this isn't a pure menu response, send text
-        if not text_sent and not engine_res.is_deterministic:
+        # Fallback: if no text or menu action was dispatched and this isn't a pure menu response, send text
+        if not text_sent and not menu_sent and not engine_res.is_deterministic:
             res = await adapter.send_response(msg, response_text, config)
             if isinstance(res, dict):
                 send_info = res

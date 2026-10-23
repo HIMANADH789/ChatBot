@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import type { MenuNode, ContextImage, DescriptiveRule, CompiledProfile, MenuGraphNode } from "@/types";
+import type { MenuNode, ContextImage, ContextMap, DescriptiveRule, CompiledProfile, MenuGraphNode } from "@/types";
 import { MenuGraphBuilder } from "@/components/MenuGraphBuilder";
 
 const BACKEND_URL = process.env.NEXT_API_URL || "http://localhost:8000";
@@ -406,6 +406,243 @@ function ContextualImagesSection({ cfg, editable, onSave }: {
             {saving ? "Saving…" : "Save Images"}
           </button>
           {saved && <span className="text-xs font-medium text-green-600">✓ Images Saved</span>}
+          {error && <span className="text-xs text-red-600">{error}</span>}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+// ── Contextual Maps & Locations Section ───────────────────────────────────────
+function ContextualMapsSection({ cfg, editable, onSave }: {
+  cfg: Record<string, unknown>;
+  editable: boolean;
+  onSave: (fields: Record<string, unknown>) => Promise<void>;
+}) {
+  const [maps, setMaps] = useState<ContextMap[]>(() => {
+    const raw = (cfg.context_maps as ContextMap[]) || [];
+    return Array.isArray(raw) ? raw : [];
+  });
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  function addMap() {
+    const newMap: ContextMap = {
+      id: `map_${Date.now()}`,
+      title: "SV Professionals Campus",
+      address: "SV Professionals, Beside Ameerpet Metro Station, Ameerpet, Hyderabad, Telangana 500038",
+      google_maps_url: "https://maps.app.goo.gl/UmU6RZw3iHLQuQYs8",
+      latitude: 17.4003212,
+      longitude: 78.4908396,
+      descriptor_tag: "When user asks about campus location, address, where to visit, directions, or how to reach the institute",
+      description: "When user asks about campus location, address, where to visit, directions, or how to reach the institute",
+      caption: "SV Professionals Hyderabad Campus Location",
+      frequency: "on_intent",
+    };
+    setMaps([...maps, newMap]);
+  }
+
+  async function save() {
+    setSaving(true);
+    setError("");
+    setSaved(false);
+    try {
+      await onSave({ context_maps: maps });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save contextual maps");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Section title="📍 Contextual Maps &amp; Location Registry (WhatsApp &amp; Channels)">
+      <div className="rounded-lg bg-sky-50 border border-sky-100 p-3.5 text-xs text-sky-950 space-y-1">
+        <p className="font-semibold text-sky-900">📍 Native Channel Geolocation &amp; Context Machine:</p>
+        <p>• Renders interactive WhatsApp location cards with direct Google Maps navigation.</p>
+        <p>• Controlled by dual specification: physical address/coordinates + LLM prompt trigger directives.</p>
+        <p>• Contextual engine delivers course offerings first on initial greeting, and sends map location when user inquires about visiting or directions.</p>
+      </div>
+
+      <div className="space-y-4">
+        {maps.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">
+            No location maps configured for this channel. Click below to add a location pin.
+          </div>
+        ) : (
+          maps.map((loc, idx) => (
+            <div key={loc.id || idx} className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3 border-b border-gray-100 pb-2">
+                <span className="text-xs font-bold px-2 py-0.5 rounded bg-sky-100 text-sky-800">
+                  📍 Location #{idx + 1}: {loc.title || "Untitled"}
+                </span>
+                {editable && (
+                  <button
+                    onClick={() => setMaps(maps.filter((_, i) => i !== idx))}
+                    className="text-xs text-red-500 hover:text-red-700 font-medium hover:underline"
+                  >
+                    Delete Location
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Location Name / Header
+                  </label>
+                  <input
+                    type="text"
+                    value={loc.title || ""}
+                    onChange={(e) => {
+                      const next = [...maps];
+                      next[idx] = { ...loc, title: e.target.value };
+                      setMaps(next);
+                    }}
+                    disabled={!editable}
+                    placeholder="e.g. SV Professionals Main Campus"
+                    className={inputCls}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Google Maps Link
+                  </label>
+                  <input
+                    type="text"
+                    value={loc.google_maps_url || ""}
+                    onChange={(e) => {
+                      const next = [...maps];
+                      next[idx] = { ...loc, google_maps_url: e.target.value };
+                      setMaps(next);
+                    }}
+                    disabled={!editable}
+                    placeholder="https://maps.app.goo.gl/UmU6RZw3iHLQuQYs8"
+                    className={`${inputCls} font-mono text-xs`}
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Physical Address
+                  </label>
+                  <input
+                    type="text"
+                    value={loc.address || ""}
+                    onChange={(e) => {
+                      const next = [...maps];
+                      next[idx] = { ...loc, address: e.target.value };
+                      setMaps(next);
+                    }}
+                    disabled={!editable}
+                    placeholder="e.g. Beside Ameerpet Metro Station, Ameerpet, Hyderabad, Telangana 500038"
+                    className={inputCls}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Latitude
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={loc.latitude ?? ""}
+                    onChange={(e) => {
+                      const next = [...maps];
+                      next[idx] = { ...loc, latitude: parseFloat(e.target.value) || undefined };
+                      setMaps(next);
+                    }}
+                    disabled={!editable}
+                    placeholder="17.4003212"
+                    className={`${inputCls} font-mono text-xs`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Longitude
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={loc.longitude ?? ""}
+                    onChange={(e) => {
+                      const next = [...maps];
+                      next[idx] = { ...loc, longitude: parseFloat(e.target.value) || undefined };
+                      setMaps(next);
+                    }}
+                    disabled={!editable}
+                    placeholder="78.4908396"
+                    className={`${inputCls} font-mono text-xs`}
+                  />
+                </div>
+              </div>
+
+              <div className="border-t border-gray-100 pt-3">
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  🏷️ Trigger Context &amp; LLM Usage Directive <span className="text-gray-400 font-normal">(Specifies when LLM/state machine delivers this location)</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={loc.descriptor_tag || loc.description || ""}
+                  onChange={(e) => {
+                    const next = [...maps];
+                    next[idx] = {
+                      ...loc,
+                      descriptor_tag: e.target.value,
+                      description: e.target.value,
+                    };
+                    setMaps(next);
+                  }}
+                  disabled={!editable}
+                  placeholder="e.g. When user asks about campus location, address, where to visit, directions, or how to reach the institute"
+                  className={`${inputCls} text-xs`}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Location Caption / Description (sent in WhatsApp payload)
+                </label>
+                <input
+                  type="text"
+                  value={loc.caption || ""}
+                  onChange={(e) => {
+                    const next = [...maps];
+                    next[idx] = { ...loc, caption: e.target.value };
+                    setMaps(next);
+                  }}
+                  disabled={!editable}
+                  placeholder="e.g. SV Professionals Hyderabad Campus Location"
+                  className={inputCls}
+                />
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {editable && (
+        <div className="flex items-center gap-3 pt-2">
+          <button
+            onClick={addMap}
+            className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            + Add Location / Map
+          </button>
+          <button
+            onClick={save}
+            disabled={saving}
+            className="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50 ml-auto"
+          >
+            {saving ? "Saving…" : "Save Location Maps"}
+          </button>
+          {saved && <span className="text-xs font-medium text-green-600">✓ Location Maps Saved</span>}
           {error && <span className="text-xs text-red-600">{error}</span>}
         </div>
       )}
@@ -1266,6 +1503,9 @@ export default function SetupConfigPage() {
 
       {/* Contextual Images & Media Delivery */}
       <ContextualImagesSection cfg={cfg} editable={editable} onSave={saveConfig} />
+
+      {/* Contextual Maps & Locations (WhatsApp & Channels) */}
+      <ContextualMapsSection cfg={cfg} editable={editable} onSave={saveConfig} />
 
       {/* Client-Configurable Descriptive Trigger Rules */}
       <DescriptiveRulesSection cfg={cfg} editable={editable} onSave={saveConfig} />

@@ -427,13 +427,14 @@ export function MenuGraphBuilder({
                   </label>
                   <input
                     type="text"
-                    value={(activeNode as any).descriptor_tag || ""}
+                    value={(activeNode as any).descriptor_tag || (activeNode as any).description || ""}
                     onChange={(e) =>
                       handleUpdateActiveNode({
                         descriptor_tag: e.target.value,
+                        description: e.target.value,
                       } as any)
                     }
-                    placeholder="e.g. Trigger on session start OR when user asks for course options / coaching details"
+                    placeholder="e.g. Display at start of conversation or initial greeting, or when user explicitly asks for courses or menu list"
                     className="w-full rounded-lg border border-indigo-200 bg-white px-2.5 py-1.5 text-xs text-indigo-950 focus:border-indigo-500 focus:outline-none"
                   />
                 </div>

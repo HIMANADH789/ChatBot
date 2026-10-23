@@ -13,11 +13,22 @@ Covers:
 import asyncio
 import sys
 import os
+import time
 
 # Ensure the backend package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import unittest
+
+
+def _has_module(name: str) -> bool:
+    """Check if a module is importable without triggering side-effects."""
+    import importlib
+    try:
+        importlib.import_module(name)
+        return True
+    except ImportError:
+        return False
 
 
 def _run_async(coro):
@@ -1087,7 +1098,7 @@ class TestDynamicStateMachineContextExtraction(unittest.TestCase):
             pure_menu_res = await evaluate_menu_triggers("Hello", menu_tree, [], None)
             self.assertIsNotNone(pure_menu_res)
 
-            # 4. Test evaluate_map_triggers: SV short URL and first chat descriptor trigger
+            # 4. Test evaluate_map_triggers: Map should NOT be sent on career query, but SHOULD be sent on location inquiry
             maps = [
                 {
                     "id": "sv_campus_location",
@@ -1096,14 +1107,166 @@ class TestDynamicStateMachineContextExtraction(unittest.TestCase):
                     "latitude": 17.4003212,
                     "longitude": 78.4908396,
                     "google_maps_url": "https://maps.app.goo.gl/UmU6RZw3iHLQuQYs8",
-                    "descriptor_tag": "Show in first chat or initial greeting, and when asked by user for location, address, campus, directions, or how to visit",
+                    "descriptor_tag": "When user asks about campus location, address, where to visit, directions, or how to reach the institute",
                 }
             ]
             first_chat_maps = await evaluate_map_triggers(query, "", maps, [], None)
-            self.assertEqual(len(first_chat_maps), 1)
-            self.assertEqual(first_chat_maps[0]["google_maps_url"], "https://maps.app.goo.gl/UmU6RZw3iHLQuQYs8")
+            self.assertEqual(len(first_chat_maps), 0, "Location map should not be attached on general career inquiry")
+
+            # Location query should trigger map pin
+            loc_maps = await evaluate_map_triggers("Where is your institute located?", "", maps, [], None)
+            self.assertEqual(len(loc_maps), 1)
+            self.assertEqual(loc_maps[0]["google_maps_url"], "https://maps.app.goo.gl/UmU6RZw3iHLQuQYs8")
 
         _run_async(_run())
+
+
+class TestSessionStateArtifactTrackingAndDedup(unittest.TestCase):
+    """Test webhook deduplication, 24-hour session TTL, and artifact tracking."""
+
+    @unittest.skipUnless(
+        _has_module("fastapi"),
+        "fastapi not installed — skip webhook dedup test"
+    )
+    def test_meta_webhook_deduplication(self):
+        """Test that duplicate WhatsApp webhooks delivered within 24h are rejected."""
+        from app.api.integrations import _check_and_mark_message_processed
+
+        msg_id = f"wamid.test_{int(time.time())}"
+
+        async def _test():
+            # First delivery -> Allowed
+            first = await _check_and_mark_message_processed("test_client", "whatsapp", msg_id)
+            self.assertTrue(first, "First webhook delivery should be processed")
+
+            # Duplicate delivery 50ms later -> Discarded
+            second = await _check_and_mark_message_processed("test_client", "whatsapp", msg_id)
+            self.assertFalse(second, "Duplicate webhook delivery should be dropped immediately")
+
+        _run_async(_test())
+
+    def test_greeting_preserves_conversational_text_and_menu(self):
+        """Test WhatsAppChannelRenderer emits BOTH greeting text and menu buttons."""
+        from app.adapters.channel_renderer import WhatsAppChannelRenderer
+        from app.core.user_event import EngineResponse, BotAction, ActionType
+        from app.services.state_store import UserSessionState
+
+        state = UserSessionState(
+            session_id="sess_greet",
+            tenant_id="sv_professionals",
+            channel="whatsapp",
+            user_id="user_456",
+        )
+        response = EngineResponse(
+            session_id="sess_greet",
+            text="Hello! Welcome to SV Professional Institute. How can I assist you today?",
+            is_deterministic=False,
+            actions=[
+                BotAction(
+                    action_type=ActionType.TEXT,
+                    payload={"text": "Hello! Welcome to SV Professional Institute. How can I assist you today?"},
+                ),
+                BotAction(
+                    action_type=ActionType.INTERACTIVE_MENU,
+                    payload={
+                        "title": "Courses & Offerings",
+                        "options": [
+                            {"button_text": "Finance & Accounting", "target_id": "opt_1"},
+                            {"button_text": "Human Resources", "target_id": "opt_2"},
+                        ],
+                    },
+                ),
+            ],
+            interactive_menu={
+                "title": "Courses & Offerings",
+                "options": [
+                    {"button_text": "Finance & Accounting", "target_id": "opt_1"},
+                    {"button_text": "Human Resources", "target_id": "opt_2"},
+                ],
+            },
+        )
+        renderer = WhatsAppChannelRenderer()
+        rendered = renderer.render(response, state)
+
+        # Must have at least 2 actions: Text greeting first, interactive buttons second
+        action_types = [a.action_type for a in rendered.actions]
+        self.assertIn(ActionType.TEXT, action_types, "Conversational greeting text must be preserved")
+        self.assertIn(ActionType.INTERACTIVE_MENU, action_types, "Interactive menu buttons must be included")
+        self.assertTrue(rendered.text.startswith("Hello!"), "Greeting text must not be wiped out")
+
+    def test_session_state_artifact_memory_and_ttl(self):
+        """Test 24-hour artifact memory tracking in UserSessionState."""
+        from app.services.state_store import UserSessionState, DEFAULT_SESSION_TTL_SECONDS
+        from app.services.context_media_service import evaluate_menu_triggers
+
+        self.assertEqual(DEFAULT_SESSION_TTL_SECONDS, 86400, "Session TTL must be 1 day (86400 seconds)")
+
+        state = UserSessionState(
+            session_id="sess_art",
+            tenant_id="sv_professionals",
+            channel="whatsapp",
+            user_id="user_789",
+        )
+        self.assertFalse(state.was_artifact_shown("menu", "MENU_ROOT"))
+
+        # Mark artifact shown
+        state.mark_artifact_shown("menu", "MENU_ROOT")
+        self.assertTrue(state.was_artifact_shown("menu", "MENU_ROOT"))
+        self.assertIn("menu_root", state.state_flags.get("shown_menu", []))
+
+        # Check serialization round-trip
+        data = state.to_dict()
+        restored = UserSessionState.from_dict(data)
+        self.assertTrue(restored.was_artifact_shown("menu", "MENU_ROOT"))
+
+        # Evaluate menu trigger on subsequent greeting: should be suppressed
+        menu_tree = [
+            {
+                "id": "MENU_ROOT",
+                "label": "Courses & Offerings",
+                "descriptor_tag": "Display at start of conversation",
+                "options": [],
+            }
+        ]
+
+        async def _test_suppression():
+            # Suppressed when already shown
+            suppressed = await evaluate_menu_triggers("Hello", menu_tree, [], None, session_state=state)
+            self.assertIsNone(suppressed, "Root menu should be suppressed on repeat greeting in same session")
+
+            # Re-delivered on explicit request
+            explicit = await evaluate_menu_triggers("show courses again", menu_tree, [], None, session_state=state)
+            self.assertIsNotNone(explicit, "Root menu should be re-delivered on explicit request")
+
+        _run_async(_test_suppression())
+
+    def test_dynamic_name_switch_mid_session(self):
+        """Test that user can update their name mid-session and state machine adapts."""
+        from app.services.state_machine import refresh_dynamic_context
+        from app.core.user_event import UserEvent, EventType
+        from app.services.state_store import UserSessionState
+
+        state = UserSessionState(
+            session_id="sess_switch",
+            tenant_id="sv_professionals",
+            channel="whatsapp",
+            user_id="user_999",
+            context_variables={"user_name": "Tanishka", "qualification": "MBA"},
+        )
+
+        async def _test():
+            event = UserEvent(
+                tenant_id="sv_professionals",
+                channel="whatsapp",
+                user_id="user_999",
+                payload="Actually my name is Priya and I want to study Finance and Accounting",
+                event_type=EventType.TEXT,
+            )
+            updated = await refresh_dynamic_context(event, state, [])
+            self.assertEqual(updated.context_variables.get("user_name"), "Priya")
+            self.assertEqual(updated.context_variables.get("interested_course"), "Finance & Accounting")
+
+        _run_async(_test())
 
 
 if __name__ == "__main__":

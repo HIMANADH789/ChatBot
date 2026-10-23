@@ -152,9 +152,11 @@ export interface MenuGraphNode {
   node_id: string;
   menu_number: string;
   title: string;
+  description?: string;
+  descriptor_tag?: string;
   whatsapp_media?: WhatsAppMedia;
   options: NodeOption[];
-  frequency?: "always" | "only_once" | string;
+  frequency?: "always" | "only_once" | "on_intent" | string;
   direct_answer?: string;
 }
 
@@ -171,6 +173,20 @@ export interface ContextImage {
   title: string;
   image_path: string;
   descriptor_tag: string;
+  description?: string;
+  caption?: string;
+  frequency?: "only_once" | "always" | "on_intent" | string;
+}
+
+export interface ContextMap {
+  id: string;
+  title: string;
+  address?: string;
+  google_maps_url?: string;
+  latitude?: number;
+  longitude?: number;
+  descriptor_tag: string;
+  description?: string;
   caption?: string;
   frequency?: "only_once" | "always" | "on_intent" | string;
 }
@@ -195,6 +211,7 @@ export interface CompiledProfile {
   chatbot_title: string;
   menu_tree: MenuNode[];
   context_images: ContextImage[];
+  context_maps?: ContextMap[];
   descriptive_rules: DescriptiveRule[];
   context_config: {
     mode: string;
@@ -213,6 +230,7 @@ export interface ClientSettings {
   menu_graph_nodes?: MenuGraphNode[];
   menu_graph_root_node_id?: string;
   context_images?: ContextImage[];
+  context_maps?: ContextMap[];
   descriptive_rules?: DescriptiveRule[];
   system_prompt?: string;
   max_history_turns?: number;

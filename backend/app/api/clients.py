@@ -174,7 +174,7 @@ async def update_client_settings(client_id: str, settings: dict, user: dict = De
     allowed = {
         "welcome_message", "system_prompt", "theme_color", "max_history_turns",
         "menu_graph_nodes", "menu_graph_root_node_id",
-        "context_images", "descriptive_rules", "chatbot_title",
+        "context_images", "context_maps", "descriptive_rules", "chatbot_title",
         "context_mode", "context_instructions", "context_capacity",
     }
     if user.get("role") == "super_admin":
@@ -189,7 +189,7 @@ async def update_client_settings(client_id: str, settings: dict, user: dict = De
         "welcome_message", "system_prompt", "chatbot_title", "theme_color",
         "context_mode", "context_instructions", "context_capacity",
         "menu_graph_nodes", "menu_graph_root_node_id",
-        "context_images", "descriptive_rules",
+        "context_images", "context_maps", "descriptive_rules",
     }
     for ch_name in existing_setups.keys():
         for k in shared_sync_keys:
@@ -420,7 +420,7 @@ async def update_setup_config(client_id: str, channel: str, body: dict, user: di
         "bot_token", "secret_token", "signing_secret",
         "welcome_message", "system_prompt", "chatbot_title", "theme_color",
         "context_mode", "context_instructions", "context_capacity",
-        "menu_graph_nodes", "menu_graph_root_node_id", "context_images", "descriptive_rules",
+        "menu_graph_nodes", "menu_graph_root_node_id", "context_images", "context_maps", "descriptive_rules",
     }
     if is_super:
         safe_keys.update({"rate_limit_rpm", "rate_limit_rpd", "max_queries_per_session"})
@@ -441,7 +441,7 @@ async def update_setup_config(client_id: str, channel: str, body: dict, user: di
     shared_sync_keys = {
         "welcome_message", "system_prompt", "chatbot_title", "theme_color",
         "context_mode", "context_instructions", "context_capacity",
-        "menu_graph_nodes", "menu_graph_root_node_id", "context_images", "descriptive_rules"
+        "menu_graph_nodes", "menu_graph_root_node_id", "context_images", "context_maps", "descriptive_rules"
     }
     for k in shared_sync_keys:
         if k in current and current[k] is not None:

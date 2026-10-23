@@ -79,6 +79,27 @@ async def whatsapp_verify(
     raise HTTPException(403, "WhatsApp webhook verification failed. Check verify_token.")
 
 
+_PROCESSED_MESSAGE_IDS: dict[str, float] = {}
+
+def _check_and_mark_message_processed(message_id: str) -> bool:
+    """
+    Deduplication guard for platform webhooks (e.g. Meta WhatsApp Cloud API retries/duplicates).
+    Returns True if this message_id was already received and processed within the last 24h.
+    """
+    if not message_id:
+        return False
+    now = time.time()
+    cutoff = now - 86400  # 24 hour deduplication window
+    expired = [k for k, ts in list(_PROCESSED_MESSAGE_IDS.items()) if ts < cutoff]
+    for k in expired:
+        _PROCESSED_MESSAGE_IDS.pop(k, None)
+
+    if message_id in _PROCESSED_MESSAGE_IDS:
+        return True
+    _PROCESSED_MESSAGE_IDS[message_id] = now
+    return False
+
+
 @integrations_router.post("/{client_id}/whatsapp")
 async def whatsapp_webhook(client_id: str, request: Request, background_tasks: BackgroundTasks):
     """
@@ -154,6 +175,18 @@ async def whatsapp_webhook(client_id: str, request: Request, background_tasks: B
 
         await db["webhook_logs"].insert_one(log_entry)
         return {"status": "ignored"}
+
+    # Atomic message deduplication: discard duplicate deliveries from Meta within 24h
+    incoming_msg_id = msg.metadata.get("message_id", "")
+    if incoming_msg_id and _check_and_mark_message_processed(incoming_msg_id):
+        logger.warning("Duplicate webhook message ignored: message_id=%s for client=%s", incoming_msg_id, client_id)
+        log_entry["status"] = "duplicate_ignored"
+        log_entry["sender_id"] = msg.user_id
+        log_entry["sender_name"] = msg.metadata.get("contact_name")
+        log_entry["message_in"] = msg.message
+        log_entry["metadata"] = msg.metadata
+        await db["webhook_logs"].insert_one(log_entry)
+        return {"status": "duplicate_ignored"}
 
     log_entry["status"] = "message_received"
     log_entry["sender_id"] = msg.user_id

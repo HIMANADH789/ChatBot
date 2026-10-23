@@ -121,6 +121,7 @@ class HybridEngine:
             vectordb=vectordb,
             channel=event.channel,
             context_variables=state.context_variables,
+            session_state=state,
         )
 
         elapsed_ms = int((time.time() - start_time) * 1000)
@@ -129,14 +130,26 @@ class HybridEngine:
         matched_menu = rag_result.get("interactive_menu")
         if matched_menu:
             actions.append(BotAction(action_type=ActionType.INTERACTIVE_MENU, payload=matched_menu))
+            m_id = str(matched_menu.get("id") or matched_menu.get("node_id") or matched_menu.get("title") or "")
+            if m_id:
+                state.mark_artifact_shown("menu", m_id)
 
         matched_images = rag_result.get("context_images", [])
         for img in matched_images:
             actions.append(BotAction(action_type=ActionType.IMAGE_MEDIA, payload=img))
+            img_id = str(img.get("image_path") or img.get("title") or "")
+            if img_id:
+                state.mark_artifact_shown("image", img_id)
 
         matched_maps = rag_result.get("context_maps", [])
         for m in matched_maps:
             actions.append(BotAction(action_type=ActionType.LOCATION_MEDIA, payload=m))
+            map_id = str(m.get("id") or m.get("title") or "")
+            if map_id:
+                state.mark_artifact_shown("map", map_id)
+
+        if matched_menu or matched_images or matched_maps:
+            await state_store.save_state(state)
 
         response = EngineResponse(
             session_id=state.session_id,
@@ -230,7 +243,30 @@ class HybridEngine:
             vectordb=vectordb,
             channel=event.channel,
             context_variables=state.context_variables,
+            session_state=state,
         ):
+            if chunk.get("type") == "done":
+                matched_menu = chunk.get("interactive_menu")
+                if matched_menu:
+                    m_id = str(matched_menu.get("id") or matched_menu.get("node_id") or matched_menu.get("title") or "")
+                    if m_id:
+                        state.mark_artifact_shown("menu", m_id)
+
+                matched_images = chunk.get("context_images", [])
+                for img in matched_images:
+                    img_id = str(img.get("image_path") or img.get("title") or "")
+                    if img_id:
+                        state.mark_artifact_shown("image", img_id)
+
+                matched_maps = chunk.get("context_maps", [])
+                for m in matched_maps:
+                    map_id = str(m.get("id") or m.get("title") or "")
+                    if map_id:
+                        state.mark_artifact_shown("map", map_id)
+
+                if matched_menu or matched_images or matched_maps:
+                    await state_store.save_state(state)
+
             yield chunk
 
 

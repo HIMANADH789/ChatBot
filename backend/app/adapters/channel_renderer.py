@@ -142,7 +142,20 @@ class WhatsAppChannelRenderer(BaseChannelRenderer):
                     ))
                     seen_images.add(image_url)
 
-            # ── 2. Build Interactive Menu ───────────────────────────────────────
+            # ── 2. Include Conversational Text (Greeting / Guidance) ─────────────
+            if (
+                response.text
+                and not response.is_deterministic
+                and not response.text.startswith("[Menu:")
+                and response.text.strip().lower() not in ("menu", "main menu", "courses")
+                and len(response.text.strip()) > 5
+            ):
+                actions.append(BotAction(
+                    action_type=ActionType.TEXT,
+                    payload={"text": response.text},
+                ))
+
+            # ── 3. Build Interactive Menu ───────────────────────────────────────
             # Format options for the WhatsApp adapter
             wa_options = []
             for opt in options:
@@ -153,13 +166,16 @@ class WhatsAppChannelRenderer(BaseChannelRenderer):
                     "description": "",
                 })
 
-            custom_body = menu.get("body_text") or menu.get("description")
-            if not custom_body and response.text and not response.text.startswith("[Menu:"):
-                body_text = response.text
-            else:
-                body_text = custom_body or "Please select an option:"
-
             header_text = menu.get("header_text") or menu.get("title") or menu.get("label") or ""
+            # If conversational text was attached above, keep menu body brief and actionable
+            if any(a.action_type == ActionType.TEXT for a in actions):
+                body_text = menu.get("body_text") or "Please select an option below:"
+            else:
+                custom_body = menu.get("body_text") or menu.get("description")
+                if not custom_body and response.text and not response.text.startswith("[Menu:"):
+                    body_text = response.text
+                else:
+                    body_text = custom_body or "Please select an option below:"
 
             # Build the interactive menu action with WhatsApp-specific truncation
             if len(wa_options) <= 3:

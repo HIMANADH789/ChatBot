@@ -26,7 +26,7 @@ from app.db.mongodb import get_db
 logger = logging.getLogger(__name__)
 
 SESSION_STATES_COLLECTION = "session_states"
-DEFAULT_SESSION_TTL_SECONDS = 5400  # 1.5 hours (90 minutes)
+DEFAULT_SESSION_TTL_SECONDS = 86400  # 24 hours (1 full day session window)
 
 
 @dataclass
@@ -79,6 +79,21 @@ class UserSessionState:
         current = self.node_execution_counts.get(node_id, 0) + 1
         self.node_execution_counts[node_id] = current
         return current
+
+    def was_artifact_shown(self, artifact_type: str, artifact_id: str) -> bool:
+        """Check if an artifact (menu, image, map) was delivered in this session."""
+        key = f"shown_{artifact_type}"
+        shown = self.state_flags.get(key, [])
+        return str(artifact_id).lower() in [str(x).lower() for x in shown]
+
+    def mark_artifact_shown(self, artifact_type: str, artifact_id: str) -> None:
+        """Mark an artifact as delivered in this session."""
+        key = f"shown_{artifact_type}"
+        shown = list(self.state_flags.get(key, []))
+        clean_id = str(artifact_id).lower()
+        if clean_id not in [str(x).lower() for x in shown]:
+            shown.append(clean_id)
+            self.state_flags[key] = shown
 
 
 def _safe_get_db():

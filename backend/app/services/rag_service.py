@@ -13,7 +13,7 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Any
 
 from app.config import settings
 from app.db.collections import QUERY_LOGS, CLIENTS
@@ -38,15 +38,19 @@ FALLBACK_MESSAGE = (
     "Please contact the administration directly for further assistance."
 )
 
-DEFAULT_SYSTEM_PROMPT = """You are a helpful, knowledgeable, and polite AI assistant for SV Professional Institute. You assist students, parents, and prospective candidates by providing clear, accurate, and well-structured answers.
+DEFAULT_SYSTEM_PROMPT = """You are a helpful, knowledgeable, and polite AI assistant for SV Professional Institute. You assist students, working professionals, and prospective candidates with clear, accurate, and engaging guidance.
 
 Key Guidelines:
-- Keep responses crisp, clean, and mobile-friendly (concise yet covering all essential details completely).
-- Structure your responses with clear section headings using markdown (e.g. ## Course Overview, ## Eligibility, ## Fee Structure, ## Career Opportunities).
-- Use **bold** for important terms, names, and key facts.
-- Organize lists, topics, and steps using clean bullet points (- item).
-- For greetings or pleasantries, reply warmly and concisely in 1-2 sentences.
-- End informational answers with a brief, interactive follow-up question offering next steps (e.g. "Would you like details on eligibility, fee structure, or placement support?").
+- Style & Tone: Warm, engaging, professional, and conversational (like an expert front desk counselor on WhatsApp).
+- Length: Keep responses small-medium (around 80-130 words). Provide direct, relevant information without clumsy or overwhelming walls of text.
+- Formatting & Readability:
+  - Use clear section headings with markdown (e.g., *Program Highlights*, *Eligibility*, *Career Growth*).
+  - Use **bold** for key course names, prerequisites, numbers, and important takeaways.
+  - Use clean bullet points (- item) for easy scanning on mobile.
+  - Incorporate moderate, tasteful emojis (🎓, 💼, 📌, 📚) to keep the text visually appealing and structured.
+- Dynamically adapt to the visitor's stated background (e.g., B.Com, MBA, experience level, or specific domain interest) throughout the conversation.
+- For greetings or pleasantries, reply warmly and concisely in 1-2 friendly sentences.
+- End informational answers with a warm, interactive follow-up question offering specific next steps.
 - Never output internal thought processes, reasoning steps, conflict resolutions, scratchpads, or <think> tags. Output ONLY the direct response."""
 
 CONVERSATIONAL_TRIGGERS = {
@@ -106,7 +110,7 @@ def _is_conversational(message: str) -> bool:
     return False
 
 
-async def _get_media_triggers(message: str, context: str, profile: dict, history: list, llm: LLMProvider, context_variables: Optional[dict] = None):
+async def _get_media_triggers(message: str, context: str, profile: dict, history: list, llm: LLMProvider, context_variables: Optional[dict] = None, session_state: Optional[Any] = None):
     from app.services.context_media_service import (
         evaluate_menu_triggers,
         evaluate_image_triggers,
@@ -115,9 +119,9 @@ async def _get_media_triggers(message: str, context: str, profile: dict, history
     menu_tree = profile.get("menu_tree", [])
     context_imgs = profile.get("context_images", [])
     context_maps = profile.get("context_maps", [])
-    matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm)
-    matched_images = await evaluate_image_triggers(message, context, context_imgs, history, llm, context_variables=context_variables)
-    matched_maps = await evaluate_map_triggers(message, context, context_maps, history, llm, context_variables=context_variables)
+    matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm, session_state=session_state)
+    matched_images = await evaluate_image_triggers(message, context, context_imgs, history, llm, context_variables=context_variables, session_state=session_state)
+    matched_maps = await evaluate_map_triggers(message, context, context_maps, history, llm, context_variables=context_variables, session_state=session_state)
     return matched_menu, matched_images, matched_maps
 
 
@@ -704,6 +708,7 @@ def _build_rag_prompt(
     active_name = None
     interested_course = None
     qualification = None
+    experience_level = None
     if context_variables:
         active_vars = [f"• {k.replace('_', ' ').title()}: {v}" for k, v in context_variables.items() if v]
         if active_vars:
@@ -711,14 +716,18 @@ def _build_rag_prompt(
         active_name = context_variables.get("user_name")
         interested_course = context_variables.get("interested_course") or context_variables.get("target_course")
         qualification = context_variables.get("qualification") or context_variables.get("user_category")
+        experience_level = context_variables.get("experience_level")
 
-    name_instruction = f"If addressing the user by name, address them as '{active_name}'." if active_name else ""
+    name_instruction = f"Address the user warmly as '{active_name}'." if active_name else ""
     course_narrowing_instruction = (
         f"MANDATORY TARGET FOCUS: The user's active interested course/domain is '{interested_course}'. "
         f"Answer follow-up questions (fee structure, syllabus, duration, eligibility) SPECIFICALLY for '{interested_course}'. "
         f"Do NOT output generic lists of all courses unless explicitly asked to compare all programs."
         if interested_course else ""
     )
+    profile_adaptation = ""
+    if qualification or experience_level:
+        profile_adaptation = f"Tailor your response to their profile: {qualification or ''} ({experience_level or 'Professional'}). Highlight relevant career advancement and upskilling pathways."
 
     return f"""Context from knowledge base:
 {context}
@@ -727,19 +736,16 @@ def _build_rag_prompt(
 User question: {message}
 
 Answer guidelines:
-1. Answer using ONLY the context above. Provide accurate and direct information. {name_instruction} {course_narrowing_instruction}
-2. RESPONSE LENGTH: Keep your answer concise — under 150 words unless the user explicitly asks for comprehensive/detailed information. Prefer clear, actionable answers.
-3. Do NOT repeat the same information or phrase multiple times. If exact data (e.g. fee amounts) is unavailable, state it ONCE clearly and suggest contacting admin.
-4. Presentation & Formatting:
-   - Use markdown headings (## Heading) for key section labels.
-   - Use **bold** for important terms, names, numbers, and key facts.
-   - Use bullet points (- item) for listing items, modules, criteria, or steps.
-5. Keep the response crisp, well-structured, and easy to read on mobile.
-6. Speak naturally and professionally. Never use meta-phrases like "according to the context" or "the document states".
-7. Do NOT suggest contacting anyone unless the question is completely unanswerable from the context.
-8. End with a brief follow-up question (e.g., "Would you like to know more about eligibility or upcoming batches?").
-9. Do NOT add a "Sources" section or mention internal document filenames.
-10. Output ONLY the direct final answer. Do NOT output <think> tags, reasoning steps, or scratchpad text."""
+1. Answer using ONLY the context above. Provide accurate, helpful, and direct information. {name_instruction} {course_narrowing_instruction} {profile_adaptation}
+2. RESPONSE LENGTH: Keep answers small-medium (around 80–130 words). Keep it clear, engaging, and mobile-friendly — avoid clumsy, overwhelming walls of text.
+3. Presentation & Formatting:
+   - Use clean **bolding** for course names, key requirements, and highlights.
+   - Use tasteful emojis (🎓, 💼, 📌, 📚) moderately to make the response visually engaging.
+   - Use clean bullet points (- item) for easy scanning on WhatsApp.
+4. If exact data (like specific fees) is not in the context, state it clearly once and suggest contacting the admin desk for the official schedule.
+5. Speak naturally, warmly, and professionally (like ChatGPT or an expert front desk counselor). Never say "according to the context" or "the document states".
+6. End with a friendly, interactive follow-up question offering specific next steps.
+7. Output ONLY the direct final answer. Never output <think> tags, internal reasoning, or scratchpad text."""
 
 
 # ── Public API: non-streaming ─────────────────────────────────────────────────
@@ -753,6 +759,7 @@ async def query(
     vectordb: VectorStoreProvider,
     channel: str = "widget",
     context_variables: Optional[dict] = None,
+    session_state: Optional[Any] = None,
 ) -> dict:
     start = time.time()
     db = get_db()
@@ -814,13 +821,13 @@ async def query(
             model_name = "identity_parser"
             usage_stats = {}
         else:
-            conv_prompt = f"{history_text}\nUser: {message}\n\nRespond directly as a friendly front desk assistant in 1-2 sentences."
+            conv_prompt = f"{history_text}\nUser: {message}\n\nRespond directly as a friendly, engaging front desk counselor for SV Professional Institute in 1-2 warm sentences with an emoji."
             llm_response = await llm.generate(conv_prompt, system_prompt=system_prompt, temperature=0.4, max_tokens=256)
             text = _clean_markdown(llm_response.text)
             model_name = llm_response.model
             usage_stats = llm_response.usage
         if not text or len(text.strip()) == 0:
-            text = "Hello! How can I assist you today?"
+            text = "Hello! 👋 Welcome to SV Professional Institute. How can I assist you with your career and professional education today?"
         await add_message(session_id, "assistant", text)
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, text, [], response_time, model_name, usage_stats, channel=channel)
@@ -833,11 +840,12 @@ async def query(
         menu_tree = profile.get("menu_tree", [])
         context_imgs = profile.get("context_images", [])
         context_maps = profile.get("context_maps", [])
-        matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm)
-        matched_images = await evaluate_image_triggers(message, "", context_imgs, history, llm, context_variables=context_variables)
-        matched_maps = await evaluate_map_triggers(message, "", context_maps, history, llm, context_variables=context_variables)
+        matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm, session_state=session_state)
+        matched_images = await evaluate_image_triggers(message, "", context_imgs, history, llm, context_variables=context_variables, session_state=session_state)
+        matched_maps = await evaluate_map_triggers(message, "", context_maps, history, llm, context_variables=context_variables, session_state=session_state)
 
-        if matched_menu:
+        # Do NOT overwrite conversational greeting text with menu label template
+        if not text and matched_menu:
             label = matched_menu.get("label") or matched_menu.get("title") or "our options"
             name_prefix = f"Hello {extracted_name}! " if extracted_name else "Hello! "
             text = f"{name_prefix}Welcome to SV Professional Institute. Here are the available {label.lower()}:"
@@ -886,7 +894,7 @@ async def query(
             await add_message(session_id, "assistant", cached_resp, cached.get("sources", []))
             response_time = int((time.time() - start) * 1000)
             await _log_query(client_id, session_id, message, cached_resp, cached.get("sources", []), response_time, "cache", {}, channel=channel)
-            matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
+            matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables, session_state=session_state)
             return {
                 "response": cached_resp,
                 "sources": cached.get("sources", []),
@@ -911,11 +919,12 @@ async def query(
 User message: {message}
 
 Instructions:
-1. You are the AI Front Desk Assistant for this institution. Follow your system prompt persona, responsibilities, and tone.
-2. If the user introduces themselves (e.g. gives their name, qualification, or educational background) or asks for career guidance, courses, or general information, address them warmly by name if provided, introduce the relevant programs offered (e.g. CA, CMA, ACCA, CS, B.Com, Finance & Accounting, HR, Executive/Professional upskilling), and explain how they can get started.
-3. If they asked for specific verified facts (such as exact rupee fee structures or official registration dates) that require official document verification and none are available, provide a helpful general overview of the program and invite them to speak with the administrative desk for the latest official fee schedules.
-4. Keep the response concise, mobile-friendly (use clean bullet points if listing courses), and end with an engaging next-step question.
-5. Output ONLY the direct response. Do NOT output thinking tags (<think>...</think>) or internal reasoning."""
+1. You are the AI Front Desk Counselor for SV Professional Institute. Follow your system prompt persona, responsibilities, and tone.
+2. If the user introduces themselves (e.g., provides name, qualification like B.Com or MBA, work experience, or background), address them warmly by name if provided, introduce the best-fit programs (e.g., Finance & Accounting, HR, CA, Executive upskilling), and explain how they can advance.
+3. Keep the response small-medium (around 80–130 words), well-formatted with **bold** highlights, tasteful emojis (🎓, 💼, 📌), and clean bullet points for easy scanning on WhatsApp.
+4. If they asked for specific verified facts (such as exact rupee fee structures or official registration dates) not available in the context, give a clear overview of the program and invite them to speak with our admissions desk for the latest official fee schedules.
+5. End with an engaging, interactive follow-up question offering next steps.
+6. Output ONLY the direct response. Do NOT output thinking tags (<think>...</think>) or internal reasoning."""
 
         llm_response = await llm.generate(guidance_prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=400)
         text = _clean_markdown(llm_response.text)
@@ -926,7 +935,7 @@ Instructions:
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, text, [], response_time, llm_response.model, llm_response.usage, channel=channel)
 
-        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
+        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables, session_state=session_state)
         return {
             "response": text,
             "sources": [],
@@ -942,7 +951,7 @@ Instructions:
         await add_message(session_id, "assistant", clarification)
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, clarification, [], response_time, llm.get_model_name(), {}, channel=channel)
-        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
+        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables, session_state=session_state)
         return {
             "response": clarification,
             "sources": [],
@@ -979,7 +988,7 @@ Instructions:
             context_variables=context_variables,
         )
 
-    matched_menu, matched_images, matched_maps = await _get_media_triggers(message, context, profile, history, llm, context_variables=context_variables)
+    matched_menu, matched_images, matched_maps = await _get_media_triggers(message, context, profile, history, llm, context_variables=context_variables, session_state=session_state)
 
     return {
         "response": text,
@@ -1002,6 +1011,7 @@ async def query_stream(
     vectordb: VectorStoreProvider,
     channel: str = "widget",
     context_variables: Optional[dict] = None,
+    session_state: Optional[Any] = None,
 ):
     start = time.time()
     db = get_db()
@@ -1067,7 +1077,7 @@ async def query_stream(
             full_text = f"Hello {extracted_name}! What would you like to explore about our institution today?"
             yield {"type": "token", "text": full_text}
         else:
-            conv_prompt = f"{history_text}\nUser: {message}\n\nRespond directly as a friendly front desk assistant in 1-2 sentences."
+            conv_prompt = f"{history_text}\nUser: {message}\n\nRespond directly as a friendly, engaging front desk counselor for SV Professional Institute in 1-2 warm sentences with an emoji."
             raw_gen = llm.generate_stream(conv_prompt, system_prompt=system_prompt, temperature=0.4, max_tokens=256)
             async for chunk in _filter_thinking_stream(raw_gen):
                 full_text += chunk
@@ -1075,13 +1085,13 @@ async def query_stream(
             full_text = _clean_markdown(full_text)
             model_name = llm.get_model_name()
             if not full_text:
-                full_text = "Hello! How can I assist you today?"
+                full_text = "Hello! 👋 Welcome to SV Professional Institute. How can I assist you with your career and professional education today?"
                 yield {"type": "token", "text": full_text}
         await add_message(session_id, "assistant", full_text)
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, full_text, [], response_time, model_name, {}, channel=channel)
 
-        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
+        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables, session_state=session_state)
 
         yield {
             "type": "done",
@@ -1124,7 +1134,7 @@ async def query_stream(
             await add_message(session_id, "assistant", cached["response"], cached["sources"])
             response_time = int((time.time() - start) * 1000)
             await _log_query(client_id, session_id, message, cached["response"], cached["sources"], response_time, "cache", {}, channel=channel)
-            matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
+            matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables, session_state=session_state)
             yield {"type": "token", "text": cached["response"]}
             yield {
                 "type": "done",
@@ -1142,15 +1152,22 @@ async def query_stream(
     if not top_candidates:
         logger.info("No vector document chunks found for query '%s'. Streaming front-desk guidance via LLM.", search_query)
         await _rate_limiter.acquire()
-        guidance_prompt = f"""{history_text}
+        user_context_block = ""
+        if context_variables:
+            active_vars = [f"• {k.replace('_', ' ').title()}: {v}" for k, v in context_variables.items() if v]
+            if active_vars:
+                user_context_block = "Active User Session Profile Context (Dynamic State):\n" + "\n".join(active_vars) + "\n\n"
+
+        guidance_prompt = f"""{user_context_block}{history_text}
 User message: {message}
 
 Instructions:
-1. You are the AI Front Desk Assistant for this institution. Follow your system prompt persona, responsibilities, and tone.
-2. If the user introduces themselves (e.g. gives their name, qualification, or educational background) or asks for career guidance, courses, or general information, address them warmly by name if provided, introduce the relevant programs offered (e.g. CA, CMA, ACCA, CS, B.Com), and explain how they can get started.
-3. If they asked for specific verified facts (such as exact rupee fee structures or official registration dates) that require official document verification and none are available, provide a helpful general overview of the program and invite them to speak with the administrative desk for the latest official fee schedules.
-4. Keep the response concise, mobile-friendly (use clean bullet points if listing courses), and end with an engaging next-step question.
-5. Output ONLY the direct response. Do NOT output thinking tags (<think>...</think>) or internal reasoning."""
+1. You are the AI Front Desk Counselor for SV Professional Institute. Follow your system prompt persona, responsibilities, and tone.
+2. If the user introduces themselves (e.g., provides name, qualification like B.Com or MBA, work experience, or background), address them warmly by name if provided, introduce the best-fit programs (e.g., Finance & Accounting, HR, CA, Executive upskilling), and explain how they can advance.
+3. Keep the response small-medium (around 80–130 words), well-formatted with **bold** highlights, tasteful emojis (🎓, 💼, 📌), and clean bullet points for easy scanning on WhatsApp.
+4. If they asked for specific verified facts (such as exact rupee fee structures or official registration dates) not available in the context, give a clear overview of the program and invite them to speak with our admissions desk for the latest official fee schedules.
+5. End with an engaging, interactive follow-up question offering next steps.
+6. Output ONLY the direct response. Do NOT output thinking tags (<think>...</think>) or internal reasoning."""
 
         full_text = ""
         raw_gen = llm.generate_stream(guidance_prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=400)
@@ -1166,7 +1183,7 @@ Instructions:
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, full_text, [], response_time, llm.get_model_name(), {}, channel=channel)
 
-        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
+        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables, session_state=session_state)
         yield {
             "type": "done",
             "session_id": session_id,
@@ -1183,7 +1200,7 @@ Instructions:
         await add_message(session_id, "assistant", clarification)
         response_time = int((time.time() - start) * 1000)
         await _log_query(client_id, session_id, message, clarification, [], response_time, llm.get_model_name(), {}, channel=channel)
-        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables)
+        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables, session_state=session_state)
         yield {"type": "token", "text": clarification}
         yield {
             "type": "done",
@@ -1227,7 +1244,7 @@ Instructions:
             context_variables=context_variables,
         )
 
-    matched_menu, matched_images, matched_maps = await _get_media_triggers(message, context, profile, history, llm, context_variables=context_variables)
+    matched_menu, matched_images, matched_maps = await _get_media_triggers(message, context, profile, history, llm, context_variables=context_variables, session_state=session_state)
 
     yield {
         "type": "done",
