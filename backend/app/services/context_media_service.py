@@ -267,27 +267,7 @@ async def evaluate_menu_triggers(
             if overlap >= 2 or (len(tag_words) == 1 and overlap == 1):
                 return node
 
-            # LLM Evaluator for natural language prompt directives
-            if len(query.split()) >= 2 and len(tag_words) > 0:
-                eval_prompt = f"""You are an intelligent state machine evaluator for an educational assistant.
-Evaluate whether the menu item "{node_label}" should be triggered for the current user message based on the state machine directive.
-
-User Message: "{query}"
-Session State:
-- Start of conversation / greeting: {is_start_or_greeting}
-- Previously shown in session: {was_shown}
-- Explicit request for menu/courses list: {is_explicit_request}
-
-State Machine Directive: "{tag}"
-
-Respond ONLY with YES or NO:"""
-                try:
-                    resp = await llm.generate(eval_prompt, temperature=0.0, max_tokens=10)
-                    if "yes" in resp.text.lower():
-                        logger.info("Menu node '%s' matched via LLM directive evaluation", node_label)
-                        return node
-                except Exception as e:
-                    logger.debug("Menu directive LLM evaluation failed: %s", e)
+# LLM evaluator removed – the previous implementation referenced undefined variables (is_start_or_greeting, was_shown, is_explicit_request) and caused a NameError. Menu triggering now relies on rule‑based checks above.
 
     return None
 
