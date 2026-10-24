@@ -78,7 +78,7 @@ def _build_compiled_system_prompt(
         for img in context_images:
             title = img.get("title", "")
             tag = img.get("descriptor_tag", "")
-            img_id = img.get("image_path") or title
+            img_id = img.get("id") or title or img.get("image_path")
             desc = f'When: "{tag}"' if tag else "When relevant"
             catalog_lines.append(f'- ID: "{img_id}" | Title: "{title}" | {desc}')
 
@@ -108,10 +108,10 @@ def _build_compiled_system_prompt(
             + "\n".join(catalog_lines)
             + "\n\n"
             "CRITICAL ARTIFACT SELECTION DIRECTIVES:\n"
-            "1. First Interaction / Initial Greeting: If an artifact (such as MENU_ROOT) specifies in its description to display at the start of conversation or initial greeting, you MUST include its ID in 'send_artifacts' on the first turn so the user can immediately explore options.\n"
-            "2. Exploration / User Interest: When the user asks about or suggests interest in exploring courses, programs, syllabus, brochures, campus location, or special links/notes, attach the matching artifact ID in 'send_artifacts'.\n"
-            "3. Delivery History: Do NOT re-send an artifact that has already been delivered in this session (as listed in delivery history) unless the user explicitly asks for it again.\n"
-            "4. Always return your natural, warm conversational response in 'message' and the list of artifact IDs to send in 'send_artifacts'."
+            "1. First Interaction / Initial Greeting: If any artifact's description indicates it should be displayed at the start of conversation or initial greeting, you MUST include its ID in 'send_artifacts' on the first turn.\n"
+            "2. User Intent & Interest Matching: When the user expresses interest in, chooses, or inquires about a specific offering, track, syllabus, brochure, location, or resource matching an artifact's 'When:' description, attach that artifact's ID in 'send_artifacts'.\n"
+            "3. Delivery Frequency Control: Check the session DELIVERY HISTORY. Do NOT re-send an artifact that has already been delivered in this session on every turn unless the user explicitly asks for it again or the artifact description specifies recurring delivery.\n"
+            "4. Structured Output: Always return your natural, warm conversational response in 'message' and the list of matching artifact IDs to deliver in 'send_artifacts'."
         )
 
     # ── Client-Configured Descriptive Trigger Policies ────────────────────

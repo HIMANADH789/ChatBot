@@ -38,17 +38,17 @@ FALLBACK_MESSAGE = (
     "Please contact the administration directly for further assistance."
 )
 
-DEFAULT_SYSTEM_PROMPT = """You are a helpful, knowledgeable, and polite AI assistant for SV Professional Institute. You assist students, working professionals, and prospective candidates with clear, accurate, and engaging guidance.
+DEFAULT_SYSTEM_PROMPT = """You are a helpful, knowledgeable, and polite AI assistant. You assist visitors, clients, and prospective candidates with clear, accurate, and engaging guidance.
 
 Key Guidelines:
 - Style & Tone: Warm, engaging, professional, and conversational (like an expert front desk counselor on WhatsApp).
 - Length: Keep responses small-medium (around 80-130 words). Provide direct, relevant information without clumsy or overwhelming walls of text.
 - Formatting & Readability:
-  - Use clear section headings with markdown (e.g., *Program Highlights*, *Eligibility*, *Career Growth*).
-  - Use **bold** for key course names, prerequisites, numbers, and important takeaways.
+  - Use clear section headings with markdown (e.g., *Highlights*, *Eligibility*, *Next Steps*).
+  - Use **bold** for key names, prerequisites, numbers, and important takeaways.
   - Use clean bullet points (- item) for easy scanning on mobile.
   - Incorporate moderate, tasteful emojis (🎓, 💼, 📌, 📚) to keep the text visually appealing and structured.
-- Dynamically adapt to the visitor's stated background (e.g., B.Com, MBA, experience level, or specific domain interest) throughout the conversation.
+- Dynamically adapt to the visitor's stated background, interests, and preferences throughout the conversation.
 - For greetings or pleasantries, reply warmly and concisely in 1-2 friendly sentences.
 - End informational answers with a warm, interactive follow-up question offering specific next steps.
 - Never output internal thought processes, reasoning steps, conflict resolutions, scratchpads, or <think> tags. Output ONLY the direct response."""
@@ -146,23 +146,33 @@ def _resolve_artifacts(artifact_ids: list, profile: dict) -> tuple:
     for aid in artifact_ids:
         aid_lower = str(aid).lower().strip().strip('"')
 
-        # Check menus (support direct ID, title, or generic root triggers)
+        # Check menus (match by component id or title/label)
         for node in menu_tree:
             node_id = str(node.get("id") or node.get("node_id") or "").lower()
             node_label = str(node.get("label") or node.get("title") or "").lower()
-            if aid_lower in (node_id, node_label, "menu_root", "menu", "root", "courses", "offerings", "courses & offerings") or (
-                len(aid_lower) > 3 and (aid_lower in node_id or aid_lower in node_label)
+            if aid_lower in (node_id, node_label) or (
+                len(aid_lower) > 3 and (aid_lower in node_id or aid_lower in node_label or (len(node_label) > 3 and node_label in aid_lower))
             ):
                 if matched_menu is None:
                     matched_menu = node
                 break
 
-        # Check images
+        # Check images (match by component id, title, or image path)
         for img in context_images:
             img_path = str(img.get("image_path", "")).lower()
             img_title = str(img.get("title", "")).lower()
             img_id = str(img.get("id", "")).lower()
-            if aid_lower in (img_path, img_title, img_id) or (len(aid_lower) > 3 and (aid_lower in img_path or aid_lower in img_title)):
+            matched = False
+            if aid_lower in (img_id, img_title, img_path):
+                matched = True
+            elif len(aid_lower) >= 3 and (aid_lower in img_id or aid_lower in img_title or aid_lower in img_path):
+                matched = True
+            elif len(img_id) >= 3 and img_id in aid_lower:
+                matched = True
+            elif len(img_title) >= 3 and img_title in aid_lower:
+                matched = True
+
+            if matched:
                 if img not in matched_images:
                     matched_images.append(img)
                 break
@@ -987,7 +997,7 @@ async def query(
 
     matched_menu, matched_images, matched_maps, matched_inclusions = _resolve_artifacts(artifact_ids, profile)
 
-    # Safety net: If no menu was attached by LLM, check if initial greeting / first interaction
+    # Safety net 1: If no menu was attached by LLM, check if initial greeting / first interaction
     # requires MENU_ROOT that hasn't been shown yet this session
     if matched_menu is None and (is_light or not history):
         for node in profile.get("menu_tree", []):
@@ -997,6 +1007,7 @@ async def query(
                 if session_state and not session_state.was_artifact_shown("menu", m_id):
                     matched_menu = node
                     break
+
 
     # If inclusion texts were selected, ensure their snippet content is appended if not already in text
     for inc in matched_inclusions:
@@ -1148,7 +1159,7 @@ async def query_stream(
 
     matched_menu, matched_images, matched_maps, matched_inclusions = _resolve_artifacts(artifact_ids, profile)
 
-    # Safety net: If no menu was attached by LLM, check if initial greeting / first interaction
+    # Safety net 1: If no menu was attached by LLM, check if initial greeting / first interaction
     # requires MENU_ROOT that hasn't been shown yet this session
     if matched_menu is None and (is_light or not history):
         for node in profile.get("menu_tree", []):
@@ -1158,6 +1169,7 @@ async def query_stream(
                 if session_state and not session_state.was_artifact_shown("menu", m_id):
                     matched_menu = node
                     break
+
 
     # If inclusion texts were selected, ensure their snippet content is appended if not already in text
     for inc in matched_inclusions:

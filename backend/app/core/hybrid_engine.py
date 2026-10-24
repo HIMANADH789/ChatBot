@@ -130,30 +130,34 @@ class HybridEngine:
         matched_menu = rag_result.get("interactive_menu")
         if matched_menu:
             actions.append(BotAction(action_type=ActionType.INTERACTIVE_MENU, payload=matched_menu))
-            m_id = str(matched_menu.get("id") or matched_menu.get("node_id") or matched_menu.get("title") or "")
-            if m_id:
-                state.mark_artifact_shown("menu", m_id)
+            for k in ("id", "node_id", "title", "label"):
+                val = matched_menu.get(k)
+                if val:
+                    state.mark_artifact_shown("menu", str(val))
 
         matched_images = rag_result.get("context_images", [])
         for img in matched_images:
             actions.append(BotAction(action_type=ActionType.IMAGE_MEDIA, payload=img))
-            img_id = str(img.get("image_path") or img.get("title") or "")
-            if img_id:
-                state.mark_artifact_shown("image", img_id)
+            for k in ("id", "title", "image_path"):
+                val = img.get(k)
+                if val:
+                    state.mark_artifact_shown("image", str(val))
 
         matched_maps = rag_result.get("context_maps", [])
         for m in matched_maps:
             actions.append(BotAction(action_type=ActionType.LOCATION_MEDIA, payload=m))
-            map_id = str(m.get("id") or m.get("title") or "")
-            if map_id:
-                state.mark_artifact_shown("map", map_id)
+            for k in ("id", "title"):
+                val = m.get(k)
+                if val:
+                    state.mark_artifact_shown("map", str(val))
 
         matched_inclusions = rag_result.get("inclusion_texts", [])
         for inc in matched_inclusions:
             actions.append(BotAction(action_type=ActionType.INCLUSION_TEXT, payload=inc))
-            inc_id = str(inc.get("id") or inc.get("title") or "")
-            if inc_id:
-                state.mark_artifact_shown("inclusion", inc_id)
+            for k in ("id", "title"):
+                val = inc.get(k)
+                if val:
+                    state.mark_artifact_shown("inclusion", str(val))
 
         await state_store.save_state(state)
 
