@@ -127,24 +127,28 @@ def _build_artifact_delivery_history(session_state) -> str:
 def _resolve_artifacts(artifact_ids: list, profile: dict) -> tuple:
     """Resolve artifact IDs from the LLM response into actual artifact data objects."""
     if not artifact_ids:
-        return None, [], []
+        return None, [], [], []
 
     matched_menu = None
     matched_images = []
     matched_maps = []
+    matched_inclusions = []
 
     menu_tree = profile.get("menu_tree", [])
     context_images = profile.get("context_images", [])
     context_maps = profile.get("context_maps", [])
+    inclusion_texts = profile.get("inclusion_texts", [])
 
     for aid in artifact_ids:
         aid_lower = str(aid).lower().strip().strip('"')
 
-        # Check menus
+        # Check menus (support direct ID, title, or generic root triggers)
         for node in menu_tree:
             node_id = str(node.get("id") or node.get("node_id") or "").lower()
             node_label = str(node.get("label") or node.get("title") or "").lower()
-            if aid_lower == node_id or aid_lower == node_label:
+            if aid_lower in (node_id, node_label, "menu_root", "menu", "root", "courses", "offerings", "courses & offerings") or (
+                len(aid_lower) > 3 and (aid_lower in node_id or aid_lower in node_label)
+            ):
                 if matched_menu is None:
                     matched_menu = node
                 break
@@ -153,19 +157,31 @@ def _resolve_artifacts(artifact_ids: list, profile: dict) -> tuple:
         for img in context_images:
             img_path = str(img.get("image_path", "")).lower()
             img_title = str(img.get("title", "")).lower()
-            if aid_lower == img_path or aid_lower == img_title or aid_lower in img_path:
-                matched_images.append(img)
+            img_id = str(img.get("id", "")).lower()
+            if aid_lower in (img_path, img_title, img_id) or (len(aid_lower) > 3 and (aid_lower in img_path or aid_lower in img_title)):
+                if img not in matched_images:
+                    matched_images.append(img)
                 break
 
         # Check maps
         for m in context_maps:
             map_id = str(m.get("id") or m.get("title") or "").lower()
             map_title = str(m.get("title", "")).lower()
-            if aid_lower == map_id or aid_lower == map_title:
-                matched_maps.append(m)
+            if aid_lower in (map_id, map_title) or (len(aid_lower) > 3 and (aid_lower in map_id or aid_lower in map_title)):
+                if m not in matched_maps:
+                    matched_maps.append(m)
                 break
 
-    return matched_menu, matched_images, matched_maps
+        # Check inclusion texts
+        for inc in inclusion_texts:
+            inc_id = str(inc.get("id") or inc.get("title") or "").lower()
+            inc_title = str(inc.get("title", "")).lower()
+            if aid_lower in (inc_id, inc_title) or (len(aid_lower) > 3 and (aid_lower in inc_id or aid_lower in inc_title)):
+                if inc not in matched_inclusions:
+                    matched_inclusions.append(inc)
+                break
+
+    return matched_menu, matched_images, matched_maps, matched_inclusions
 
 
 def _parse_llm_json_response(raw_text: str) -> dict:
@@ -814,7 +830,11 @@ def _build_rag_prompt(
     if artifact_delivery_history and artifact_delivery_history != "None sent yet.":
         delivery_block = f"Artifacts already sent this session (do NOT re-send unless user explicitly asks):\n{artifact_delivery_history}\n\n"
 
-    return f"""{rag_block}{user_context_block}{delivery_block}{history_text}
+    turn_hint = ""
+    if not history_text or not history_text.strip():
+        turn_hint = "Turn Context: This is the FIRST message/interaction of this session with the student. Note: If any artifact (e.g. MENU_ROOT) specifies in its 'When' description to display at the start of conversation or initial greeting, you MUST include its ID in 'send_artifacts' so the student can immediately explore options.\n\n"
+
+    return f"""{rag_block}{user_context_block}{delivery_block}{turn_hint}{history_text}
 User message: {message}
 
 Remember: respond with the JSON format specified in your instructions. Include your conversational response in "message", any artifact IDs to attach in "send_artifacts", and any new user context you extracted in "context_updates"."""
@@ -940,7 +960,24 @@ async def query(
             if isinstance(v, str) and v.strip() and v.lower() != "null":
                 context_variables[k] = v.strip()
 
-    matched_menu, matched_images, matched_maps = _resolve_artifacts(artifact_ids, profile)
+    matched_menu, matched_images, matched_maps, matched_inclusions = _resolve_artifacts(artifact_ids, profile)
+
+    # Safety net: If no menu was attached by LLM, check if initial greeting / first interaction
+    # requires MENU_ROOT that hasn't been shown yet this session
+    if matched_menu is None and (is_light or not history):
+        for node in profile.get("menu_tree", []):
+            desc = (node.get("descriptor_tag") or "").lower()
+            if any(k in desc for k in ("start of conversation", "initial greeting", "first message", "first interaction", "first chat", "mandatory")):
+                m_id = str(node.get("id") or node.get("node_id") or "")
+                if session_state and not session_state.was_artifact_shown("menu", m_id):
+                    matched_menu = node
+                    break
+
+    # If inclusion texts were selected, ensure their snippet content is appended if not already in text
+    for inc in matched_inclusions:
+        inc_content = inc.get("content") or inc.get("text", "")
+        if inc_content and inc_content.lower() not in text.lower():
+            text = f"{text}\n\n{inc_content}".strip()
 
     await add_message(session_id, "assistant", text, all_sources)
     response_time = int((time.time() - start) * 1000)
@@ -963,6 +1000,7 @@ async def query(
         "interactive_menu": matched_menu,
         "context_images": matched_images,
         "context_maps": matched_maps,
+        "inclusion_texts": matched_inclusions,
         "context_variables": context_variables,
     }
 
@@ -1083,7 +1121,24 @@ async def query_stream(
             if isinstance(v, str) and v.strip() and v.lower() != "null":
                 context_variables[k] = v.strip()
 
-    matched_menu, matched_images, matched_maps = _resolve_artifacts(artifact_ids, profile)
+    matched_menu, matched_images, matched_maps, matched_inclusions = _resolve_artifacts(artifact_ids, profile)
+
+    # Safety net: If no menu was attached by LLM, check if initial greeting / first interaction
+    # requires MENU_ROOT that hasn't been shown yet this session
+    if matched_menu is None and (is_light or not history):
+        for node in profile.get("menu_tree", []):
+            desc = (node.get("descriptor_tag") or "").lower()
+            if any(k in desc for k in ("start of conversation", "initial greeting", "first message", "first interaction", "first chat", "mandatory")):
+                m_id = str(node.get("id") or node.get("node_id") or "")
+                if session_state and not session_state.was_artifact_shown("menu", m_id):
+                    matched_menu = node
+                    break
+
+    # If inclusion texts were selected, ensure their snippet content is appended if not already in text
+    for inc in matched_inclusions:
+        inc_content = inc.get("content") or inc.get("text", "")
+        if inc_content and inc_content.lower() not in text.lower():
+            text = f"{text}\n\n{inc_content}".strip()
 
     await add_message(session_id, "assistant", text, all_sources)
     response_time = int((time.time() - start) * 1000)
@@ -1107,6 +1162,7 @@ async def query_stream(
         "interactive_menu": matched_menu,
         "context_images": matched_images,
         "context_maps": matched_maps,
+        "inclusion_texts": matched_inclusions,
     }
 
 

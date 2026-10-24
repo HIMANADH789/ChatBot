@@ -84,6 +84,11 @@ def get_context_maps(settings: dict, setup_cfg: dict) -> list[dict]:
     return setup_cfg.get("context_maps") or settings.get("context_maps") or []
 
 
+def get_inclusion_texts(settings: dict, setup_cfg: dict) -> list[dict]:
+    """Retrieve inclusion texts list from setup config or settings."""
+    return setup_cfg.get("inclusion_texts") or settings.get("inclusion_texts") or []
+
+
 def _was_node_shown_in_history(node_id_or_label: str, history: list) -> bool:
     """Check if a menu node or label was already shown in the session history."""
     if not history:

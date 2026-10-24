@@ -46,11 +46,12 @@ def _build_compiled_system_prompt(
     descriptive_rules: list[dict],
     context_mode: str,
     context_instructions: str,
+    inclusion_texts: Optional[list[dict]] = None,
 ) -> str:
     """
     Compile a unified system prompt that:
     1. Sets the assistant persona (base_prompt from client config)
-    2. Lists ALL available artifacts (menus, images, maps) as a catalog
+    2. Lists ALL available artifacts (menus, images, maps, inclusion texts) as a catalog
        with IDs and descriptions so the LLM can decide when to attach them
     3. Instructs the LLM to return structured JSON: {message, send_artifacts, context_updates}
     4. Includes context memory rules
@@ -91,16 +92,26 @@ def _build_compiled_system_prompt(
             desc = f'When: "{tag}"' if tag else "When user asks about location/address"
             catalog_lines.append(f'- ID: "{map_id}" | Title: "{title}" | Address: "{addr}" | {desc}')
 
+    if inclusion_texts:
+        catalog_lines.append("## INCLUSION TEXTS (Specific textual snippets, links, or notes to attach/include)")
+        for inc in inclusion_texts:
+            title = inc.get("title", "")
+            tag = inc.get("descriptor_tag", "")
+            inc_id = inc.get("id") or title
+            content = inc.get("content") or inc.get("text", "")
+            desc = f'When: "{tag}"' if tag else "When relevant"
+            catalog_lines.append(f'- ID: "{inc_id}" | Title: "{title}" | Snippet: "{content}" | {desc}')
+
     if catalog_lines:
         sections.append(
             "AVAILABLE ARTIFACTS (you decide when to send these along with your message):\n"
             + "\n".join(catalog_lines)
             + "\n\n"
-            "Each artifact has a 'When' description written by the client. Use your judgment:\n"
-            "- Send an artifact when the user's message context matches its description\n"
-            "- Don't re-send an artifact the user has already received in this session (check the delivery history)\n"
-            "- You may send multiple artifacts if appropriate\n"
-            "- If no artifact is relevant, send none"
+            "CRITICAL ARTIFACT SELECTION DIRECTIVES:\n"
+            "1. First Interaction / Initial Greeting: If an artifact (such as MENU_ROOT) specifies in its description to display at the start of conversation or initial greeting, you MUST include its ID in 'send_artifacts' on the first turn so the user can immediately explore options.\n"
+            "2. Exploration / User Interest: When the user asks about or suggests interest in exploring courses, programs, syllabus, brochures, campus location, or special links/notes, attach the matching artifact ID in 'send_artifacts'.\n"
+            "3. Delivery History: Do NOT re-send an artifact that has already been delivered in this session (as listed in delivery history) unless the user explicitly asks for it again.\n"
+            "4. Always return your natural, warm conversational response in 'message' and the list of artifact IDs to send in 'send_artifacts'."
         )
 
     # ── Client-Configured Descriptive Trigger Policies ────────────────────
@@ -166,12 +177,13 @@ async def compile_client_profile(client_id: str, channel: str = "widget") -> dic
     )
 
     # Normalize menu tree
-    from app.services.context_media_service import normalize_menu_tree, get_context_maps
+    from app.services.context_media_service import normalize_menu_tree, get_context_maps, get_inclusion_texts
     menu_tree = normalize_menu_tree(settings, setup_cfg)
 
-    # Context images and maps
+    # Context images, maps, and inclusion texts
     context_images = setup_cfg.get("context_images") or settings.get("context_images") or []
     context_maps = get_context_maps(settings, setup_cfg)
+    inclusion_texts = get_inclusion_texts(settings, setup_cfg)
 
     # Descriptive rules
     descriptive_rules = setup_cfg.get("descriptive_rules") or settings.get("descriptive_rules") or []
@@ -191,6 +203,7 @@ async def compile_client_profile(client_id: str, channel: str = "widget") -> dic
         descriptive_rules=descriptive_rules,
         context_mode=context_mode,
         context_instructions=context_instructions,
+        inclusion_texts=inclusion_texts,
     )
 
     # Build O(1) flattened menu index
@@ -219,6 +232,7 @@ async def compile_client_profile(client_id: str, channel: str = "widget") -> dic
         "graph_node_count": menu_graph.node_count,
         "image_count": len(context_images),
         "map_count": len(context_maps),
+        "inclusion_count": len(inclusion_texts),
         "rule_count": len(descriptive_rules),
         "mode": context_mode,
     }, sort_keys=True)
@@ -240,6 +254,7 @@ async def compile_client_profile(client_id: str, channel: str = "widget") -> dic
         "menu_graph_root_node_id": menu_graph_root_id or menu_graph.root_node_id,
         "context_images": context_images,
         "context_maps": context_maps,
+        "inclusion_texts": inclusion_texts,
         "descriptive_rules": descriptive_rules,
         "context_config": {
             "mode": context_mode,

@@ -30,6 +30,7 @@ def setup_defaults(channel: str) -> dict:
         "menu_graph_root_node_id": "MENU_ROOT",
         "context_images": [],                # Contextual image triggers
         "context_maps": [],                  # Contextual location/map triggers
+        "inclusion_texts": [],               # Specific textual snippets, links, or notes to include
         "descriptive_rules": [],             # Client-configured descriptive trigger policies
     }
     if channel == "widget":
@@ -146,6 +147,14 @@ class ContextMap(BaseModel):
     frequency: str = "on_intent"          # "only_once" | "always" | "on_intent"
 
 
+class InclusionText(BaseModel):
+    id: str
+    title: str
+    content: str                          # The exact text, snippet, or link to include/append
+    descriptor_tag: str                   # Context condition when this snippet should be included
+    frequency: str = "on_intent"          # "only_once" | "always" | "on_intent"
+
+
 class DescriptiveRule(BaseModel):
     id: str
     title: str
@@ -169,6 +178,7 @@ class ClientSettings(BaseModel):
     menu_graph_root_node_id: Optional[str] = "MENU_ROOT"
     context_images: list[ContextImage] = Field(default_factory=list)
     context_maps: list[ContextMap] = Field(default_factory=list)
+    inclusion_texts: list[InclusionText] = Field(default_factory=list)
     descriptive_rules: list[DescriptiveRule] = Field(default_factory=list)
 
     # Pre-compiled runtime snapshot (cached in MongoDB & in-memory)

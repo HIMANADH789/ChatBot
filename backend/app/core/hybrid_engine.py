@@ -148,6 +148,13 @@ class HybridEngine:
             if map_id:
                 state.mark_artifact_shown("map", map_id)
 
+        matched_inclusions = rag_result.get("inclusion_texts", [])
+        for inc in matched_inclusions:
+            actions.append(BotAction(action_type=ActionType.INCLUSION_TEXT, payload=inc))
+            inc_id = str(inc.get("id") or inc.get("title") or "")
+            if inc_id:
+                state.mark_artifact_shown("inclusion", inc_id)
+
         await state_store.save_state(state)
 
         response = EngineResponse(
@@ -160,6 +167,7 @@ class HybridEngine:
             interactive_menu=matched_menu,
             context_images=matched_images,
             context_maps=matched_maps,
+            inclusion_texts=matched_inclusions,
             metadata=event.metadata,
             response_time_ms=elapsed_ms,
         )
@@ -263,8 +271,13 @@ class HybridEngine:
                     if map_id:
                         state.mark_artifact_shown("map", map_id)
 
-                if matched_menu or matched_images or matched_maps:
-                    await state_store.save_state(state)
+                matched_inclusions = chunk.get("inclusion_texts", [])
+                for inc in matched_inclusions:
+                    inc_id = str(inc.get("id") or inc.get("title") or "")
+                    if inc_id:
+                        state.mark_artifact_shown("inclusion", inc_id)
+
+                await state_store.save_state(state)
 
             yield chunk
 

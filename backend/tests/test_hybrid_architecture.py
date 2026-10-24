@@ -327,17 +327,22 @@ async def test_artifact_resolution():
         "context_maps": [
             {"id": "MAP_MAIN_CAMPUS", "title": "Hyderabad Main Branch", "address": "Madhapur, Hyderabad"},
         ],
+        "inclusion_texts": [
+            {"id": "INSTA_SUCCESS_STORIES", "title": "Instagram Success Stories", "content": "Check out https://instagram.com/svprofessionals"},
+        ],
     }
 
     # Resolve by ID
-    menu, imgs, maps = _resolve_artifacts(["MENU_ROOT", "Curriculum Chart", "MAP_MAIN_CAMPUS"], profile)
+    menu, imgs, maps, inclusions = _resolve_artifacts(["MENU_ROOT", "Curriculum Chart", "MAP_MAIN_CAMPUS", "INSTA_SUCCESS_STORIES"], profile)
     assert menu is not None
     assert menu["id"] == "MENU_ROOT"
     assert len(imgs) == 1
     assert imgs[0]["title"] == "Curriculum Chart"
     assert len(maps) == 1
     assert maps[0]["id"] == "MAP_MAIN_CAMPUS"
-    print("[PASS] Artifact resolution passed")
+    assert len(inclusions) == 1
+    assert inclusions[0]["id"] == "INSTA_SUCCESS_STORIES"
+    print("[PASS] Artifact resolution with inclusion_texts passed")
 
 
 async def main():
