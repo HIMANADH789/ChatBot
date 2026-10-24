@@ -101,7 +101,9 @@ def extract_user_name(text: str) -> Optional[str]:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _is_conversational(message: str) -> bool:
+def _is_lightweight_query(message: str) -> bool:
+    """Check if a message is short/conversational enough to skip RAG retrieval.
+    The LLM still handles it — we just skip the expensive vector search."""
     lower = message.lower().strip().rstrip("?!.")
     if lower in CONVERSATIONAL_TRIGGERS:
         return True
@@ -110,19 +112,110 @@ def _is_conversational(message: str) -> bool:
     return False
 
 
-async def _get_media_triggers(message: str, context: str, profile: dict, history: list, llm: LLMProvider, context_variables: Optional[dict] = None, session_state: Optional[Any] = None):
-    from app.services.context_media_service import (
-        evaluate_menu_triggers,
-        evaluate_image_triggers,
-        evaluate_map_triggers,
-    )
+def _build_artifact_delivery_history(session_state) -> str:
+    """Build a summary of which artifacts have already been sent this session."""
+    if not session_state or not hasattr(session_state, "state_flags"):
+        return "None sent yet."
+    lines = []
+    for key, ids in session_state.state_flags.items():
+        if key.startswith("shown_") and isinstance(ids, list) and ids:
+            artifact_type = key.replace("shown_", "").title()
+            lines.append(f"  {artifact_type}: {', '.join(str(i) for i in ids)}")
+    return "\n".join(lines) if lines else "None sent yet."
+
+
+def _resolve_artifacts(artifact_ids: list, profile: dict) -> tuple:
+    """Resolve artifact IDs from the LLM response into actual artifact data objects."""
+    if not artifact_ids:
+        return None, [], []
+
+    matched_menu = None
+    matched_images = []
+    matched_maps = []
+
     menu_tree = profile.get("menu_tree", [])
-    context_imgs = profile.get("context_images", [])
+    context_images = profile.get("context_images", [])
     context_maps = profile.get("context_maps", [])
-    matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm, session_state=session_state)
-    matched_images = await evaluate_image_triggers(message, context, context_imgs, history, llm, context_variables=context_variables, session_state=session_state)
-    matched_maps = await evaluate_map_triggers(message, context, context_maps, history, llm, context_variables=context_variables, session_state=session_state)
+
+    for aid in artifact_ids:
+        aid_lower = str(aid).lower().strip().strip('"')
+
+        # Check menus
+        for node in menu_tree:
+            node_id = str(node.get("id") or node.get("node_id") or "").lower()
+            node_label = str(node.get("label") or node.get("title") or "").lower()
+            if aid_lower == node_id or aid_lower == node_label:
+                if matched_menu is None:
+                    matched_menu = node
+                break
+
+        # Check images
+        for img in context_images:
+            img_path = str(img.get("image_path", "")).lower()
+            img_title = str(img.get("title", "")).lower()
+            if aid_lower == img_path or aid_lower == img_title or aid_lower in img_path:
+                matched_images.append(img)
+                break
+
+        # Check maps
+        for m in context_maps:
+            map_id = str(m.get("id") or m.get("title") or "").lower()
+            map_title = str(m.get("title", "")).lower()
+            if aid_lower == map_id or aid_lower == map_title:
+                matched_maps.append(m)
+                break
+
     return matched_menu, matched_images, matched_maps
+
+
+def _parse_llm_json_response(raw_text: str) -> dict:
+    """
+    Parse LLM structured JSON response. Robust against:
+    - Markdown code fences (```json ... ```)
+    - Think tags
+    - Partial JSON
+    Falls back to treating entire text as message if parsing fails.
+    """
+    text = raw_text.strip()
+
+    # 1. Remove think/thought/reasoning blocks
+    text = re.sub(r"<(think|thought|reasoning)>[\s\S]*?</\1>", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"<(think|thought|reasoning)>[\s\S]*", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"</?(think|thought|reasoning)>", "", text, flags=re.IGNORECASE).strip()
+
+    # 2. Remove markdown code fences
+    if text.startswith("```"):
+        parts = text.split("```")
+        text = parts[1] if len(parts) > 1 else text
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+
+    # 3. Try direct JSON parse
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict) and "message" in parsed:
+            return parsed
+    except Exception:
+        pass
+
+    # 4. Try to find JSON object in the text
+    json_match = re.search(r'\{[\s\S]*"message"\s*:\s*"[\s\S]*?\}', text)
+    if json_match:
+        try:
+            parsed = json.loads(json_match.group())
+            if isinstance(parsed, dict) and "message" in parsed:
+                return parsed
+        except Exception:
+            pass
+
+    # 5. Fallback: treat entire text as the message
+    clean_text = _clean_markdown(text)
+    return {
+        "message": clean_text or raw_text,
+        "send_artifacts": [],
+        "context_updates": {},
+    }
+
 
 
 def _clean_markdown(text: str) -> str:
@@ -703,49 +796,29 @@ def _build_rag_prompt(
     history_text: str,
     message: str,
     context_variables: Optional[dict] = None,
+    artifact_delivery_history: str = "",
 ) -> str:
+    """Build the user-turn prompt for the unified LLM call.
+    The system prompt (with artifact catalog + JSON instructions) is passed separately."""
     user_context_block = ""
-    active_name = None
-    interested_course = None
-    qualification = None
-    experience_level = None
     if context_variables:
         active_vars = [f"• {k.replace('_', ' ').title()}: {v}" for k, v in context_variables.items() if v]
         if active_vars:
-            user_context_block = "Active User Session Profile Context (Dynamic State):\n" + "\n".join(active_vars) + "\n\n"
-        active_name = context_variables.get("user_name")
-        interested_course = context_variables.get("interested_course") or context_variables.get("target_course")
-        qualification = context_variables.get("qualification") or context_variables.get("user_category")
-        experience_level = context_variables.get("experience_level")
+            user_context_block = "Active User Session Context:\n" + "\n".join(active_vars) + "\n\n"
 
-    name_instruction = f"Address the user warmly as '{active_name}'." if active_name else ""
-    course_narrowing_instruction = (
-        f"MANDATORY TARGET FOCUS: The user's active interested course/domain is '{interested_course}'. "
-        f"Answer follow-up questions (fee structure, syllabus, duration, eligibility) SPECIFICALLY for '{interested_course}'. "
-        f"Do NOT output generic lists of all courses unless explicitly asked to compare all programs."
-        if interested_course else ""
-    )
-    profile_adaptation = ""
-    if qualification or experience_level:
-        profile_adaptation = f"Tailor your response to their profile: {qualification or ''} ({experience_level or 'Professional'}). Highlight relevant career advancement and upskilling pathways."
+    rag_block = ""
+    if context and context.strip():
+        rag_block = f"Retrieved knowledge base context:\n{context}\n\n"
 
-    return f"""Context from knowledge base:
-{context}
+    delivery_block = ""
+    if artifact_delivery_history and artifact_delivery_history != "None sent yet.":
+        delivery_block = f"Artifacts already sent this session (do NOT re-send unless user explicitly asks):\n{artifact_delivery_history}\n\n"
 
-{user_context_block}{history_text}
-User question: {message}
+    return f"""{rag_block}{user_context_block}{delivery_block}{history_text}
+User message: {message}
 
-Answer guidelines:
-1. Answer using ONLY the context above. Provide accurate, helpful, and direct information. {name_instruction} {course_narrowing_instruction} {profile_adaptation}
-2. RESPONSE LENGTH: Keep answers small-medium (around 80–130 words). Keep it clear, engaging, and mobile-friendly — avoid clumsy, overwhelming walls of text.
-3. Presentation & Formatting:
-   - Use clean **bolding** for course names, key requirements, and highlights.
-   - Use tasteful emojis (🎓, 💼, 📌, 📚) moderately to make the response visually engaging.
-   - Use clean bullet points (- item) for easy scanning on WhatsApp.
-4. If exact data (like specific fees) is not in the context, state it clearly once and suggest contacting the admin desk for the official schedule.
-5. Speak naturally, warmly, and professionally (like ChatGPT or an expert front desk counselor). Never say "according to the context" or "the document states".
-6. End with a friendly, interactive follow-up question offering specific next steps.
-7. Output ONLY the direct final answer. Never output <think> tags, internal reasoning, or scratchpad text."""
+Remember: respond with the JSON format specified in your instructions. Include your conversational response in "message", any artifact IDs to attach in "send_artifacts", and any new user context you extracted in "context_updates"."""
+
 
 
 # ── Public API: non-streaming ─────────────────────────────────────────────────
@@ -769,7 +842,7 @@ async def query(
 
     client = await db[CLIENTS].find_one({"client_id": client_id})
     cs = (client or {}).get("settings", {})
-    system_prompt = DEFAULT_SYSTEM_PROMPT
+
     # Load pre-compiled client runtime profile snapshot (O(1) in-memory cache)
     from app.services.profile_compiler import get_compiled_profile
     profile = await get_compiled_profile(client_id, channel)
@@ -790,7 +863,7 @@ async def query(
     if active_name:
         system_prompt += f"\n\nMANDATORY VISITOR IDENTITY INSTRUCTION:\n- Visitor's active name is '{active_name}'. Always address them warmly as '{active_name}' in your response."
 
-    # If context is disabled ("none") or context capacity is 0, operate completely stateless
+    # Context history loading
     if context_mode == "none" or context_capacity <= 0:
         max_history = 0
         history = []
@@ -812,183 +885,76 @@ async def query(
         return {"response": limit_msg, "sources": [], "session_id": session_id}
 
     history_text = _build_history_text(history)
+    artifact_delivery_history = _build_artifact_delivery_history(session_state)
 
-    # Conversational shortcut — no retrieval
-    if _is_conversational(message) or (extracted_name and len(message.split()) <= 6):
-        await _rate_limiter.acquire()
-        if extracted_name:
-            text = f"Hello {extracted_name}! What would you like to explore about our institution today?"
-            model_name = "identity_parser"
-            usage_stats = {}
-        else:
-            conv_prompt = f"{history_text}\nUser: {message}\n\nRespond directly as a friendly, engaging front desk counselor for SV Professional Institute in 1-2 warm sentences with an emoji."
-            llm_response = await llm.generate(conv_prompt, system_prompt=system_prompt, temperature=0.4, max_tokens=256)
-            text = _clean_markdown(llm_response.text)
-            model_name = llm_response.model
-            usage_stats = llm_response.usage
-        if not text or len(text.strip()) == 0:
-            text = "Hello! 👋 Welcome to SV Professional Institute. How can I assist you with your career and professional education today?"
-        await add_message(session_id, "assistant", text)
-        response_time = int((time.time() - start) * 1000)
-        await _log_query(client_id, session_id, message, text, [], response_time, model_name, usage_stats, channel=channel)
+    # If lightweight query (e.g. pure greeting/pleasantry), skip vector retrieval
+    is_light = _is_lightweight_query(message)
+    all_sources = []
+    top_candidates = []
+    context = ""
 
-        from app.services.context_media_service import (
-            evaluate_menu_triggers,
-            evaluate_image_triggers,
-            evaluate_map_triggers,
-        )
-        menu_tree = profile.get("menu_tree", [])
-        context_imgs = profile.get("context_images", [])
-        context_maps = profile.get("context_maps", [])
-        matched_menu = await evaluate_menu_triggers(message, menu_tree, history, llm, session_state=session_state)
-        matched_images = await evaluate_image_triggers(message, "", context_imgs, history, llm, context_variables=context_variables, session_state=session_state)
-        matched_maps = await evaluate_map_triggers(message, "", context_maps, history, llm, context_variables=context_variables, session_state=session_state)
-
-        # Do NOT overwrite conversational greeting text with menu label template
-        if not text and matched_menu:
-            label = matched_menu.get("label") or matched_menu.get("title") or "our options"
-            name_prefix = f"Hello {extracted_name}! " if extracted_name else "Hello! "
-            text = f"{name_prefix}Welcome to SV Professional Institute. Here are the available {label.lower()}:"
-
-        return {
-            "response": text,
-            "sources": [],
-            "session_id": session_id,
-            "interactive_menu": matched_menu,
-            "context_images": matched_images,
-            "context_maps": matched_maps,
-        }
-
-    can_proceed = await _rate_limiter.acquire()
-    if not can_proceed:
-        llm = _get_fallback_llm(llm)
-
-    # Context-Adaptive RAG settings from compiled snapshot
-    ctx_cfg = profile.get("context_config", {})
-    context_mode = ctx_cfg.get("mode", "none")
-    context_instructions = ctx_cfg.get("instructions", "")
-    context_capacity = int(ctx_cfg.get("capacity", 4))
-
-    # Resolve contextual query (resolves pronouns / follow-up fragments)
-    search_query = await _resolve_contextual_query(
-        message,
-        history,
-        llm,
-        context_mode=context_mode,
-        context_instructions=context_instructions,
-        context_capacity=context_capacity,
-        context_variables=context_variables,
-    )
-
-    # Enhancement 6: State-Machine Aware Semantic Cache Check
-    if settings.CACHE_ENABLED:
-        query_embedding_for_cache = await embeddings.embed_query(search_query)
-        cached = await check_cache(
-            client_id,
-            query_embedding_for_cache,
+    if not is_light:
+        search_query = await _resolve_contextual_query(
+            message,
+            history,
+            llm,
+            context_mode=context_mode,
+            context_instructions=ctx_cfg.get("instructions", ""),
+            context_capacity=context_capacity,
             context_variables=context_variables,
         )
-        if cached:
-            logger.debug("State-coherent cache hit for query: %s", search_query[:60])
-            cached_resp = cached["response"]
-            await add_message(session_id, "assistant", cached_resp, cached.get("sources", []))
-            response_time = int((time.time() - start) * 1000)
-            await _log_query(client_id, session_id, message, cached_resp, cached.get("sources", []), response_time, "cache", {}, channel=channel)
-            matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables, session_state=session_state)
-            return {
-                "response": cached_resp,
-                "sources": cached.get("sources", []),
-                "session_id": session_id,
-                "interactive_menu": matched_menu,
-                "context_images": matched_images,
-                "context_maps": matched_maps,
-            }
+        all_sources, top_candidates = await _retrieve_and_rerank(client_id, search_query, llm, embeddings, vectordb)
+        if top_candidates:
+            context = "\n\n---\n\n".join(c["text"] for c in top_candidates)
 
-    # Retrieve + rerank
-    all_sources, top_candidates = await _retrieve_and_rerank(client_id, search_query, llm, embeddings, vectordb)
-
-    if not top_candidates:
-        logger.info("No vector document chunks found for query '%s'. Generating front-desk guidance via LLM.", search_query)
-        user_context_block = ""
-        if context_variables:
-            active_vars = [f"• {k.replace('_', ' ').title()}: {v}" for k, v in context_variables.items() if v]
-            if active_vars:
-                user_context_block = "Active User Session Profile Context (Dynamic State):\n" + "\n".join(active_vars) + "\n\n"
-
-        guidance_prompt = f"""{user_context_block}{history_text}
-User message: {message}
-
-Instructions:
-1. You are the AI Front Desk Counselor for SV Professional Institute. Follow your system prompt persona, responsibilities, and tone.
-2. If the user introduces themselves (e.g., provides name, qualification like B.Com or MBA, work experience, or background), address them warmly by name if provided, introduce the best-fit programs (e.g., Finance & Accounting, HR, CA, Executive upskilling), and explain how they can advance.
-3. Keep the response small-medium (around 80–130 words), well-formatted with **bold** highlights, tasteful emojis (🎓, 💼, 📌), and clean bullet points for easy scanning on WhatsApp.
-4. If they asked for specific verified facts (such as exact rupee fee structures or official registration dates) not available in the context, give a clear overview of the program and invite them to speak with our admissions desk for the latest official fee schedules.
-5. End with an engaging, interactive follow-up question offering next steps.
-6. Output ONLY the direct response. Do NOT output thinking tags (<think>...</think>) or internal reasoning."""
-
-        llm_response = await llm.generate(guidance_prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=400)
-        text = _clean_markdown(llm_response.text)
-        if not text or len(text.strip()) == 0:
-            text = FALLBACK_MESSAGE
-
-        await add_message(session_id, "assistant", text)
-        response_time = int((time.time() - start) * 1000)
-        await _log_query(client_id, session_id, message, text, [], response_time, llm_response.model, llm_response.usage, channel=channel)
-
-        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables, session_state=session_state)
-        return {
-            "response": text,
-            "sources": [],
-            "session_id": session_id,
-            "interactive_menu": matched_menu,
-            "context_images": matched_images,
-            "context_maps": matched_maps,
-        }
-
-    # Enhancement 1: clarification check
-    clarification = await _check_clarification(search_query, top_candidates, llm, history=history)
-    if clarification:
-        await add_message(session_id, "assistant", clarification)
-        response_time = int((time.time() - start) * 1000)
-        await _log_query(client_id, session_id, message, clarification, [], response_time, llm.get_model_name(), {}, channel=channel)
-        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables, session_state=session_state)
-        return {
-            "response": clarification,
-            "sources": [],
-            "session_id": session_id,
-            "interactive_menu": matched_menu,
-            "context_images": matched_images,
-            "context_maps": matched_maps,
-        }
-
-    context = "\n\n---\n\n".join(c["text"] for c in top_candidates)
-    prompt = _build_rag_prompt(context, history_text, message, context_variables=context_variables)
+    prompt = _build_rag_prompt(
+        context=context,
+        history_text=history_text,
+        message=message,
+        context_variables=context_variables,
+        artifact_delivery_history=artifact_delivery_history,
+    )
 
     can_proceed = await _rate_limiter.acquire()
     if not can_proceed:
         llm = _get_fallback_llm(llm)
 
-    llm_response = await llm.generate(prompt, system_prompt=system_prompt, temperature=0.2, max_tokens=512)
-    text = _clean_markdown(llm_response.text)
+    llm_response = await llm.generate(
+        prompt,
+        system_prompt=system_prompt,
+        temperature=0.3,
+        max_tokens=600,
+    )
+
+    parsed = _parse_llm_json_response(llm_response.text)
+    text = parsed.get("message", "").strip()
+    if not text:
+        text = _clean_markdown(llm_response.text)
     if not text or len(text.strip()) == 0:
         text = FALLBACK_MESSAGE
 
+    artifact_ids = parsed.get("send_artifacts", []) or []
+    context_updates = parsed.get("context_updates", {}) or {}
+    if isinstance(context_updates, dict) and context_variables is not None:
+        for k, v in context_updates.items():
+            if isinstance(v, str) and v.strip() and v.lower() != "null":
+                context_variables[k] = v.strip()
+
+    matched_menu, matched_images, matched_maps = _resolve_artifacts(artifact_ids, profile)
+
     await add_message(session_id, "assistant", text, all_sources)
     response_time = int((time.time() - start) * 1000)
-    await _log_query(client_id, session_id, message, text, all_sources, response_time, llm_response.model, llm_response.usage, channel=channel)
-
-    # Store in semantic cache (only cache valid non-fallback answers)
-    if settings.CACHE_ENABLED and text != FALLBACK_MESSAGE and len(text) >= 20:
-        await store_cache(
-            client_id,
-            search_query,
-            query_embedding_for_cache,
-            text,
-            all_sources,
-            context_variables=context_variables,
-        )
-
-    matched_menu, matched_images, matched_maps = await _get_media_triggers(message, context, profile, history, llm, context_variables=context_variables, session_state=session_state)
+    await _log_query(
+        client_id,
+        session_id,
+        message,
+        text,
+        all_sources,
+        response_time,
+        llm_response.model,
+        llm_response.usage,
+        channel=channel,
+    )
 
     return {
         "response": text,
@@ -997,6 +963,7 @@ Instructions:
         "interactive_menu": matched_menu,
         "context_images": matched_images,
         "context_maps": matched_maps,
+        "context_variables": context_variables,
     }
 
 
@@ -1021,18 +988,15 @@ async def query_stream(
 
     client = await db[CLIENTS].find_one({"client_id": client_id})
     cs = (client or {}).get("settings", {})
-    system_prompt = DEFAULT_SYSTEM_PROMPT
 
     from app.services.profile_compiler import get_compiled_profile
     profile = await get_compiled_profile(client_id, channel)
-
     system_prompt = profile.get("compiled_system_prompt") or DEFAULT_SYSTEM_PROMPT
     ctx_cfg = profile.get("context_config", {})
     context_mode = ctx_cfg.get("mode") or cs.get("context_mode", "none")
     raw_cap = ctx_cfg.get("capacity") if ctx_cfg.get("capacity") is not None else cs.get("context_capacity")
     context_capacity = int(raw_cap) if raw_cap is not None else 4
 
-    # Extract dynamic user name from introduction patterns (e.g. "I am Tarun", "my name is Amit")
     extracted_name = extract_user_name(message)
     if context_variables is None:
         context_variables = {}
@@ -1043,7 +1007,6 @@ async def query_stream(
     if active_name:
         system_prompt += f"\n\nMANDATORY VISITOR IDENTITY INSTRUCTION:\n- Visitor's active name is '{active_name}'. Always address them warmly as '{active_name}' in your response."
 
-    # If context is disabled ("none") or context capacity is 0, operate completely stateless
     if context_mode == "none" or context_capacity <= 0:
         max_history = 0
         history = []
@@ -1052,7 +1015,6 @@ async def query_stream(
         max_history = min(configured_history, context_capacity) if context_capacity > 0 else configured_history
         history = await get_history(session_id, max_turns=max_history)
 
-    # Session query limit
     from app.services.chat_service import count_session_queries
     query_count = await count_session_queries(session_id)
     _setup_cfg = get_setup((client or {}).get("settings", {}), channel)
@@ -1067,185 +1029,77 @@ async def query_stream(
         return
 
     history_text = _build_history_text(history)
+    artifact_delivery_history = _build_artifact_delivery_history(session_state)
 
-    # Conversational shortcut
-    if _is_conversational(message) or (extracted_name and len(message.split()) <= 6):
-        await _rate_limiter.acquire()
-        full_text = ""
-        model_name = "identity_parser"
-        if extracted_name:
-            full_text = f"Hello {extracted_name}! What would you like to explore about our institution today?"
-            yield {"type": "token", "text": full_text}
-        else:
-            conv_prompt = f"{history_text}\nUser: {message}\n\nRespond directly as a friendly, engaging front desk counselor for SV Professional Institute in 1-2 warm sentences with an emoji."
-            raw_gen = llm.generate_stream(conv_prompt, system_prompt=system_prompt, temperature=0.4, max_tokens=256)
-            async for chunk in _filter_thinking_stream(raw_gen):
-                full_text += chunk
-                yield {"type": "token", "text": chunk}
-            full_text = _clean_markdown(full_text)
-            model_name = llm.get_model_name()
-            if not full_text:
-                full_text = "Hello! 👋 Welcome to SV Professional Institute. How can I assist you with your career and professional education today?"
-                yield {"type": "token", "text": full_text}
-        await add_message(session_id, "assistant", full_text)
-        response_time = int((time.time() - start) * 1000)
-        await _log_query(client_id, session_id, message, full_text, [], response_time, model_name, {}, channel=channel)
+    is_light = _is_lightweight_query(message)
+    all_sources = []
+    top_candidates = []
+    context = ""
 
-        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables, session_state=session_state)
-
-        yield {
-            "type": "done",
-            "session_id": session_id,
-            "sources": [],
-            "interactive_menu": matched_menu,
-            "context_images": matched_images,
-            "context_maps": matched_maps,
-        }
-        return
-
-    can_proceed = await _rate_limiter.acquire()
-    if not can_proceed:
-        llm = _get_fallback_llm(llm)
-
-    # Context-Adaptive RAG settings from compiled snapshot
-    ctx_cfg = profile.get("context_config", {})
-    context_mode = ctx_cfg.get("mode", "none")
-    context_instructions = ctx_cfg.get("instructions", "")
-    context_capacity = int(ctx_cfg.get("capacity", 4))
-
-    # Resolve contextual query (resolves pronouns / follow-up fragments)
-    search_query = await _resolve_contextual_query(
-        message,
-        history,
-        llm,
-        context_mode=context_mode,
-        context_instructions=context_instructions,
-        context_capacity=context_capacity,
-        context_variables=context_variables,
-    )
-
-    # Enhancement 6: semantic cache
-    query_embedding_for_cache = None
-    if settings.CACHE_ENABLED:
-        query_embedding_for_cache = await embeddings.embed_query(search_query)
-        cached = await check_cache(client_id, query_embedding_for_cache, context_variables=context_variables)
-        if cached:
-            logger.debug("Cache hit (stream) for query: %s", search_query[:60])
-            await add_message(session_id, "assistant", cached["response"], cached["sources"])
-            response_time = int((time.time() - start) * 1000)
-            await _log_query(client_id, session_id, message, cached["response"], cached["sources"], response_time, "cache", {}, channel=channel)
-            matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables, session_state=session_state)
-            yield {"type": "token", "text": cached["response"]}
-            yield {
-                "type": "done",
-                "session_id": session_id,
-                "sources": cached["sources"],
-                "interactive_menu": matched_menu,
-                "context_images": matched_images,
-                "context_maps": matched_maps,
-            }
-            return
-
-    # Retrieve + rerank
-    all_sources, top_candidates = await _retrieve_and_rerank(client_id, search_query, llm, embeddings, vectordb)
-
-    if not top_candidates:
-        logger.info("No vector document chunks found for query '%s'. Streaming front-desk guidance via LLM.", search_query)
-        await _rate_limiter.acquire()
-        user_context_block = ""
-        if context_variables:
-            active_vars = [f"• {k.replace('_', ' ').title()}: {v}" for k, v in context_variables.items() if v]
-            if active_vars:
-                user_context_block = "Active User Session Profile Context (Dynamic State):\n" + "\n".join(active_vars) + "\n\n"
-
-        guidance_prompt = f"""{user_context_block}{history_text}
-User message: {message}
-
-Instructions:
-1. You are the AI Front Desk Counselor for SV Professional Institute. Follow your system prompt persona, responsibilities, and tone.
-2. If the user introduces themselves (e.g., provides name, qualification like B.Com or MBA, work experience, or background), address them warmly by name if provided, introduce the best-fit programs (e.g., Finance & Accounting, HR, CA, Executive upskilling), and explain how they can advance.
-3. Keep the response small-medium (around 80–130 words), well-formatted with **bold** highlights, tasteful emojis (🎓, 💼, 📌), and clean bullet points for easy scanning on WhatsApp.
-4. If they asked for specific verified facts (such as exact rupee fee structures or official registration dates) not available in the context, give a clear overview of the program and invite them to speak with our admissions desk for the latest official fee schedules.
-5. End with an engaging, interactive follow-up question offering next steps.
-6. Output ONLY the direct response. Do NOT output thinking tags (<think>...</think>) or internal reasoning."""
-
-        full_text = ""
-        raw_gen = llm.generate_stream(guidance_prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=400)
-        async for chunk in _filter_thinking_stream(raw_gen):
-            full_text += chunk
-            yield {"type": "token", "text": chunk}
-        full_text = _clean_markdown(full_text)
-        if not full_text:
-            full_text = FALLBACK_MESSAGE
-            yield {"type": "token", "text": FALLBACK_MESSAGE}
-
-        await add_message(session_id, "assistant", full_text)
-        response_time = int((time.time() - start) * 1000)
-        await _log_query(client_id, session_id, message, full_text, [], response_time, llm.get_model_name(), {}, channel=channel)
-
-        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables, session_state=session_state)
-        yield {
-            "type": "done",
-            "session_id": session_id,
-            "sources": [],
-            "interactive_menu": matched_menu,
-            "context_images": matched_images,
-            "context_maps": matched_maps,
-        }
-        return
-
-    # Enhancement 1: clarification check
-    clarification = await _check_clarification(search_query, top_candidates, llm, history=history)
-    if clarification:
-        await add_message(session_id, "assistant", clarification)
-        response_time = int((time.time() - start) * 1000)
-        await _log_query(client_id, session_id, message, clarification, [], response_time, llm.get_model_name(), {}, channel=channel)
-        matched_menu, matched_images, matched_maps = await _get_media_triggers(message, "", profile, history, llm, context_variables=context_variables, session_state=session_state)
-        yield {"type": "token", "text": clarification}
-        yield {
-            "type": "done",
-            "session_id": session_id,
-            "sources": [],
-            "interactive_menu": matched_menu,
-            "context_images": matched_images,
-            "context_maps": matched_maps,
-        }
-        return
-
-    context = "\n\n---\n\n".join(c["text"] for c in top_candidates)
-    prompt = _build_rag_prompt(context, history_text, message, context_variables=context_variables)
-
-    can_proceed = await _rate_limiter.acquire()
-    if not can_proceed:
-        llm = _get_fallback_llm(llm)
-
-    full_text = ""
-    raw_gen = llm.generate_stream(prompt, system_prompt=system_prompt, temperature=0.2, max_tokens=512)
-    async for chunk in _filter_thinking_stream(raw_gen):
-        full_text += chunk
-        yield {"type": "token", "text": chunk}
-
-    full_text = _clean_markdown(full_text)
-    if not full_text or len(full_text) < 10:
-        full_text = FALLBACK_MESSAGE
-        yield {"type": "token", "text": FALLBACK_MESSAGE}
-
-    await add_message(session_id, "assistant", full_text, all_sources)
-    response_time = int((time.time() - start) * 1000)
-    await _log_query(client_id, session_id, message, full_text, all_sources, response_time, llm.get_model_name(), {}, channel=channel)
-
-    if settings.CACHE_ENABLED and query_embedding_for_cache is not None and full_text != FALLBACK_MESSAGE and len(full_text) >= 20:
-        await store_cache(
-            client_id,
-            search_query,
-            query_embedding_for_cache,
-            full_text,
-            all_sources,
+    if not is_light:
+        search_query = await _resolve_contextual_query(
+            message,
+            history,
+            llm,
+            context_mode=context_mode,
+            context_instructions=ctx_cfg.get("instructions", ""),
+            context_capacity=context_capacity,
             context_variables=context_variables,
         )
+        all_sources, top_candidates = await _retrieve_and_rerank(client_id, search_query, llm, embeddings, vectordb)
+        if top_candidates:
+            context = "\n\n---\n\n".join(c["text"] for c in top_candidates)
 
-    matched_menu, matched_images, matched_maps = await _get_media_triggers(message, context, profile, history, llm, context_variables=context_variables, session_state=session_state)
+    prompt = _build_rag_prompt(
+        context=context,
+        history_text=history_text,
+        message=message,
+        context_variables=context_variables,
+        artifact_delivery_history=artifact_delivery_history,
+    )
 
+    can_proceed = await _rate_limiter.acquire()
+    if not can_proceed:
+        llm = _get_fallback_llm(llm)
+
+    llm_response = await llm.generate(
+        prompt,
+        system_prompt=system_prompt,
+        temperature=0.3,
+        max_tokens=600,
+    )
+
+    parsed = _parse_llm_json_response(llm_response.text)
+    text = parsed.get("message", "").strip()
+    if not text:
+        text = _clean_markdown(llm_response.text)
+    if not text or len(text.strip()) == 0:
+        text = FALLBACK_MESSAGE
+
+    artifact_ids = parsed.get("send_artifacts", []) or []
+    context_updates = parsed.get("context_updates", {}) or {}
+    if isinstance(context_updates, dict) and context_variables is not None:
+        for k, v in context_updates.items():
+            if isinstance(v, str) and v.strip() and v.lower() != "null":
+                context_variables[k] = v.strip()
+
+    matched_menu, matched_images, matched_maps = _resolve_artifacts(artifact_ids, profile)
+
+    await add_message(session_id, "assistant", text, all_sources)
+    response_time = int((time.time() - start) * 1000)
+    await _log_query(
+        client_id,
+        session_id,
+        message,
+        text,
+        all_sources,
+        response_time,
+        llm_response.model,
+        llm_response.usage,
+        channel=channel,
+    )
+
+    yield {"type": "token", "text": text}
     yield {
         "type": "done",
         "session_id": session_id,

@@ -283,6 +283,63 @@ async def test_state_machine_aware_query_cache():
     print("[PASS] State-Machine Aware Semantic Cache template generalization & dynamic hydration passed")
 
 
+async def test_llm_json_parsing_and_fallbacks():
+    from app.services.rag_service import _parse_llm_json_response
+
+    # 1. Standard JSON
+    raw_1 = '{"message": "Hello! Welcome to SV Professionals.", "send_artifacts": ["MENU_ROOT"], "context_updates": {"user_name": "Tanishka"}}'
+    p1 = _parse_llm_json_response(raw_1)
+    assert p1["message"] == "Hello! Welcome to SV Professionals."
+    assert p1["send_artifacts"] == ["MENU_ROOT"]
+    assert p1["context_updates"]["user_name"] == "Tanishka"
+
+    # 2. Markdown fenced JSON
+    raw_2 = '```json\n{"message": "Explore our HR program.", "send_artifacts": ["img_hr_chart"], "context_updates": {"interested_course": "HR"}}\n```'
+    p2 = _parse_llm_json_response(raw_2)
+    assert p2["message"] == "Explore our HR program."
+    assert p2["send_artifacts"] == ["img_hr_chart"]
+
+    # 3. Model think tags wrapping JSON
+    raw_3 = '<think>User is greeting us.</think>\n{"message": "Hi there! How can I help you?", "send_artifacts": [], "context_updates": {}}'
+    p3 = _parse_llm_json_response(raw_3)
+    assert p3["message"] == "Hi there! How can I help you?"
+    assert p3["send_artifacts"] == []
+
+    # 4. Fallback when LLM outputs plain text instead of JSON
+    raw_4 = "Hello! Welcome to SV Professional Institute. What course are you interested in?"
+    p4 = _parse_llm_json_response(raw_4)
+    assert p4["message"] == raw_4
+    assert p4["send_artifacts"] == []
+    print("[PASS] LLM JSON parsing and fallbacks passed")
+
+
+async def test_artifact_resolution():
+    from app.services.rag_service import _resolve_artifacts
+
+    profile = {
+        "menu_tree": [
+            {"id": "MENU_ROOT", "title": "Courses & Offerings", "children": []},
+            {"id": "MENU_110", "title": "Commerce Programs", "children": []},
+        ],
+        "context_images": [
+            {"image_path": "https://img.example.com/curriculum.png", "title": "Curriculum Chart"},
+        ],
+        "context_maps": [
+            {"id": "MAP_MAIN_CAMPUS", "title": "Hyderabad Main Branch", "address": "Madhapur, Hyderabad"},
+        ],
+    }
+
+    # Resolve by ID
+    menu, imgs, maps = _resolve_artifacts(["MENU_ROOT", "Curriculum Chart", "MAP_MAIN_CAMPUS"], profile)
+    assert menu is not None
+    assert menu["id"] == "MENU_ROOT"
+    assert len(imgs) == 1
+    assert imgs[0]["title"] == "Curriculum Chart"
+    assert len(maps) == 1
+    assert maps[0]["id"] == "MAP_MAIN_CAMPUS"
+    print("[PASS] Artifact resolution passed")
+
+
 async def main():
     print("==================================================")
     print("Running Hybrid State-Machine & RAG Test Suite")

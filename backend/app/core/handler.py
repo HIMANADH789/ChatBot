@@ -136,12 +136,14 @@ async def handle_incoming(
 
                 elif action.action_type == ActionType.TEXT:
                     text_content = action.payload.get("text", response_text)
-                    # If any INTERACTIVE_MENU action follows, skip this TEXT to prevent duplicate menu output.
+                    # If an interactive menu follows, only suppress redundant [Menu: ...] fallback text
                     has_menu_ahead = any(
                         upcoming.action_type == ActionType.INTERACTIVE_MENU
                         for upcoming in engine_res.actions[engine_res.actions.index(action) + 1 :]
                     )
-                    if not has_menu_ahead and text_content and not text_content.startswith("[Menu:"):
+                    is_menu_text = bool(text_content and text_content.startswith("[Menu:"))
+                    should_skip = has_menu_ahead and is_menu_text
+                    if not should_skip and text_content:
                         res = await adapter.send_response(msg, text_content, config)
                         if isinstance(res, dict):
                             send_info = res

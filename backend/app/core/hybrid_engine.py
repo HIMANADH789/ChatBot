@@ -148,8 +148,7 @@ class HybridEngine:
             if map_id:
                 state.mark_artifact_shown("map", map_id)
 
-        if matched_menu or matched_images or matched_maps:
-            await state_store.save_state(state)
+        await state_store.save_state(state)
 
         response = EngineResponse(
             session_id=state.session_id,

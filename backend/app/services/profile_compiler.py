@@ -48,73 +48,101 @@ def _build_compiled_system_prompt(
     context_instructions: str,
 ) -> str:
     """
-    Compile a unified, high-performance system prompt incorporating:
-    - Base assistant persona
-    - Inbuilt descriptive tags registry (menus, images & map/location awareness)
-    - Client descriptive trigger policies
-    - Context carrying directives
+    Compile a unified system prompt that:
+    1. Sets the assistant persona (base_prompt from client config)
+    2. Lists ALL available artifacts (menus, images, maps) as a catalog
+       with IDs and descriptions so the LLM can decide when to attach them
+    3. Instructs the LLM to return structured JSON: {message, send_artifacts, context_updates}
+    4. Includes context memory rules
     """
     sections = [base_prompt.strip()]
 
-    # 1. Inbuilt Descriptive Tags Context
-    descriptors = []
+    # ── Artifact Catalog ──────────────────────────────────────────────────
+    catalog_lines = []
+
     if menu_tree:
-        descriptors.append("Interactive Menu Topics available for this institution:")
+        catalog_lines.append("## MENUS (Interactive option lists)")
         for node in menu_tree:
-            lbl = node.get("label", "")
-            tag = node.get("descriptor_tag", "")
-            if tag:
-                descriptors.append(f"  • Option '{lbl}': Trigger when '{tag}'")
-            else:
-                descriptors.append(f"  • Option '{lbl}'")
+            node_id = node.get("id") or node.get("node_id") or ""
+            lbl = node.get("label") or node.get("title") or ""
+            tag = node.get("descriptor_tag") or ""
+            opts = node.get("options") or node.get("children") or []
+            opt_labels = [o.get("button_text") or o.get("label", "") for o in opts]
+            opt_str = ", ".join(opt_labels[:6]) if opt_labels else "No options"
+            desc = f'When: "{tag}"' if tag else "When relevant to user query"
+            catalog_lines.append(f'- ID: "{node_id}" | Title: "{lbl}" | Options: [{opt_str}] | {desc}')
 
     if context_images:
-        descriptors.append("Contextual Media / Images available to attach:")
+        catalog_lines.append("## IMAGES (Visual media attachments)")
         for img in context_images:
             title = img.get("title", "")
             tag = img.get("descriptor_tag", "")
-            path = img.get("image_path", "")
-            descriptors.append(f"  • Image '{title}' ({path}): Trigger when '{tag}'")
+            img_id = img.get("image_path") or title
+            desc = f'When: "{tag}"' if tag else "When relevant"
+            catalog_lines.append(f'- ID: "{img_id}" | Title: "{title}" | {desc}')
 
     if context_maps:
-        descriptors.append("Contextual Location / Map Assets available to attach:")
+        catalog_lines.append("## MAPS (Location/address attachments)")
         for m in context_maps:
             title = m.get("title", "")
             tag = m.get("descriptor_tag", "")
+            map_id = m.get("id") or title
             addr = m.get("address", "")
-            maps_url = m.get("google_maps_url", "")
-            descriptors.append(f"  • Map/Location '{title}' ({addr}) [Maps: {maps_url}]: Trigger when '{tag}'")
+            desc = f'When: "{tag}"' if tag else "When user asks about location/address"
+            catalog_lines.append(f'- ID: "{map_id}" | Title: "{title}" | Address: "{addr}" | {desc}')
 
-    if descriptors:
-        sections.append("\nINBUILT DESCRIPTIVE TAGS & AVAILABLE ASSETS:\n" + "\n".join(descriptors))
+    if catalog_lines:
+        sections.append(
+            "AVAILABLE ARTIFACTS (you decide when to send these along with your message):\n"
+            + "\n".join(catalog_lines)
+            + "\n\n"
+            "Each artifact has a 'When' description written by the client. Use your judgment:\n"
+            "- Send an artifact when the user's message context matches its description\n"
+            "- Don't re-send an artifact the user has already received in this session (check the delivery history)\n"
+            "- You may send multiple artifacts if appropriate\n"
+            "- If no artifact is relevant, send none"
+        )
 
-    # 2. Client-Configured Descriptive Trigger Policies
+    # ── Client-Configured Descriptive Trigger Policies ────────────────────
     if descriptive_rules:
-        rules_text = ["CLIENT-DEFINED DESCRIPTIVE TRIGGER POLICIES:"]
+        rules_text = ["CLIENT-DEFINED POLICIES:"]
         for r in descriptive_rules:
             title = r.get("title", "Policy")
             directive = r.get("prompt_directive", "").strip()
-            ttype = r.get("trigger_type", "on_intent")
             if directive:
-                rules_text.append(f"  • [{title} - Type: {ttype}]: {directive}")
-        sections.append("\n" + "\n".join(rules_text))
+                rules_text.append(f"  • [{title}]: {directive}")
+        sections.append("\n".join(rules_text))
 
-    # 3. Context Memory & Adaptive Guidelines (Layer 2 & Layer 3 State Machine Architecture)
+    # ── Context Memory & Conversational Continuity ────────────────────────
     effective_mode = context_mode or "none"
-
     if effective_mode in ("adaptive", "full"):
         sections.append(
-            f"\n### CONTEXT MEMORY & CONVERSATIONAL CONTINUITY (MANDATORY STATE MACHINE RULES):\n"
+            f"### CONTEXT MEMORY (MANDATORY):\n"
             f"- Tracking Mode: {effective_mode.upper()}\n"
-            f"- Information to actively collect, remember, and carry across all conversation turns: {context_instructions or 'name, qualification, interested_course, experience_level'}.\n"
-            f"- Mandatory Architectural Rules:\n"
-            f"  1. When the Active User Session Profile Context specifies an active interested course (e.g. Finance & Accounting) or educational background (e.g. B.Com), ALL follow-up inquiries regarding fee structures, syllabus, eligibility, course duration, or placements MUST be answered specifically for that active target course/domain.\n"
-            f"  2. NEVER provide generic fee lists or list all courses indiscriminately unless the user explicitly requests to compare all available programs.\n"
-            f"  3. When the user introduces themselves or mentions their background (e.g. B.Com graduate), warmly acknowledge it, address them by name if provided, and tailor all advice specifically to their background.\n"
-            f"  4. If the user shifts interest to another course (e.g., from Finance to HR), immediately update the focus of your response to the newly selected course."
+            f"- Actively collect and carry across turns: {context_instructions or 'name, qualification, interested_course, experience_level'}.\n"
+            f"- When the user has an active interested course, answer follow-ups specifically for that course.\n"
+            f"- When the user shifts interest, immediately update focus.\n"
+            f"- Address user by name if known."
         )
 
+    # ── Structured Response Format ────────────────────────────────────────
+    sections.append(
+        '### RESPONSE FORMAT (MANDATORY):\n'
+        'You MUST respond with a JSON object. No markdown fences, no explanation outside the JSON.\n'
+        '{\n'
+        '  "message": "Your conversational response text here (supports markdown formatting)",\n'
+        '  "send_artifacts": ["ARTIFACT_ID_1"],\n'
+        '  "context_updates": {"user_name": "...", "interested_course": "..."}\n'
+        '}\n\n'
+        'Rules:\n'
+        '- "message": REQUIRED. Your natural, warm, engaging response.\n'
+        '- "send_artifacts": List of artifact IDs to attach. Use [] if none.\n'
+        '- "context_updates": Any new user info extracted from the message (name, qualification, course interest, experience level). Use {} if none.\n'
+        '- Output ONLY the JSON object. No preamble, no thinking tags, no explanation.'
+    )
+
     return "\n\n".join(sections)
+
 
 
 async def compile_client_profile(client_id: str, channel: str = "widget") -> dict:
