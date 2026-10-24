@@ -1,14 +1,15 @@
 """
-RAG pipeline with six enhancements:
-  1. Clarification detection  — asks for context when retrieved chunks are ambiguous
-  2. Cross-encoder reranking  — re-scores top-K candidates with a cross-encoder
-  3. Contextual chunk headers — chunks already contain document-level context (done at upload)
-  4. Metadata filtering       — narrows ChromaDB search using query-extracted entities
-  5. HyDE                     — embeds a hypothetical answer instead of the raw query
-  6. Semantic query cache      — returns cached answers for near-duplicate queries
-"""
+RAG Orchestrator Service:
+Coordinates context management, conversational flow, hybrid retrieval,
+LLM generation, and UI artifact resolution across channels.
 
-import json
+Modular architecture:
+  - app.services.retrieval: Pure hybrid retrieval (vector, BM25, HyDE, reranker)
+  - app.services.artifacts: WhatsApp and channel artifact components (menus, images, maps, inclusion texts)
+  - app.services.llm_response: Structured JSON parsing, think-tag cleanup, stream filtering
+"""
+from __future__ import annotations
+
 import logging
 import re
 import time
@@ -20,11 +21,47 @@ from app.db.collections import QUERY_LOGS, CLIENTS
 from app.db.mongodb import get_db
 from app.models.client import get_setup
 from app.providers.base import EmbeddingProvider, LLMProvider, VectorStoreProvider
-from app.services.chat_service import add_message, get_history, get_or_create_session
+from app.services.chat_service import add_message, get_history, get_or_create_session, count_session_queries
+from app.services.profile_compiler import get_compiled_profile
 from app.utils.rate_limiter import RateLimiter
-from app.utils import reranker as reranker_util
-from app.utils.query_cache import check_cache, store_cache
-from app.services.bm25_search import bm25_registry, reciprocal_rank_fusion
+
+# Modular sub-services
+from app.services.retrieval import (
+    retrieve_context,
+    retrieve_and_rerank,
+    resolve_contextual_query,
+    extract_query_metadata,
+    build_where_filter,
+    hypothetical_embedding,
+    decompose_question,
+    check_clarification,
+    _retrieve_and_rerank,
+    _resolve_contextual_query,
+    _extract_query_metadata,
+    _build_where_filter,
+    _hypothetical_embedding,
+    _decompose_question,
+    _check_clarification,
+)
+from app.services.artifacts import (
+    resolve_artifacts,
+    apply_artifact_safety_nets,
+    build_artifact_delivery_history,
+    append_inclusion_content,
+    _resolve_artifacts,
+    _apply_artifact_safety_nets,
+    _build_artifact_delivery_history,
+)
+from app.services.llm_response import (
+    parse_llm_json_response,
+    parse_json_response,
+    clean_markdown,
+    filter_thinking_stream,
+    _parse_llm_json_response,
+    _parse_json_response,
+    _clean_markdown,
+    _filter_thinking_stream,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +114,9 @@ STOP_AFTER_WORDS = {
     "got", "done", "passed", "graduated", "studied", "studying", "joined", "joining",
 }
 
+
 def extract_user_name(text: str) -> Optional[str]:
+    """Extract candidate user name from conversational intro patterns."""
     if not text:
         return None
     patterns = [
@@ -99,11 +138,8 @@ def extract_user_name(text: str) -> Optional[str]:
     return None
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
 def _is_lightweight_query(message: str) -> bool:
-    """Check if a message is short/conversational enough to skip RAG retrieval.
-    The LLM still handles it — we just skip the expensive vector search."""
+    """Check if a message is short/conversational enough to skip RAG retrieval."""
     lower = message.lower().strip().rstrip("?!.")
     if lower in CONVERSATIONAL_TRIGGERS:
         return True
@@ -112,734 +148,18 @@ def _is_lightweight_query(message: str) -> bool:
     return False
 
 
-# Alias for backward compatibility across retrieval helpers
 _is_conversational = _is_lightweight_query
 
 
-def _build_artifact_delivery_history(session_state) -> str:
-    """Build a summary of which artifacts have already been sent this session."""
-    if not session_state or not hasattr(session_state, "state_flags"):
-        return "None sent yet."
-    lines = []
-    for key, ids in session_state.state_flags.items():
-        if key.startswith("shown_") and isinstance(ids, list) and ids:
-            artifact_type = key.replace("shown_", "").title()
-            lines.append(f"  {artifact_type}: {', '.join(str(i) for i in ids)}")
-    return "\n".join(lines) if lines else "None sent yet."
-
-
-def _resolve_artifacts(artifact_ids: list, profile: dict) -> tuple:
-    """Resolve artifact IDs from the LLM response into actual artifact data objects."""
-    if not artifact_ids:
-        return None, [], [], []
-
-    matched_menu = None
-    matched_images = []
-    matched_maps = []
-    matched_inclusions = []
-
-    menu_tree = profile.get("menu_tree", [])
-    context_images = profile.get("context_images", [])
-    context_maps = profile.get("context_maps", [])
-    inclusion_texts = profile.get("inclusion_texts", [])
-
-    for aid in artifact_ids:
-        aid_lower = str(aid).lower().strip().strip('"')
-
-        # Check menus (match by component id or title/label)
-        for node in menu_tree:
-            node_id = str(node.get("id") or node.get("node_id") or "").lower()
-            node_label = str(node.get("label") or node.get("title") or "").lower()
-            if aid_lower in (node_id, node_label) or (
-                len(aid_lower) > 3 and (aid_lower in node_id or aid_lower in node_label or (len(node_label) > 3 and node_label in aid_lower))
-            ):
-                if matched_menu is None:
-                    matched_menu = node
-                break
-
-        # Check images (match by component id, title, or image path)
-        for img in context_images:
-            img_path = str(img.get("image_path", "")).lower()
-            img_title = str(img.get("title", "")).lower()
-            img_id = str(img.get("id", "")).lower()
-            matched = False
-            if aid_lower in (img_id, img_title, img_path):
-                matched = True
-            elif len(aid_lower) >= 3 and (aid_lower in img_id or aid_lower in img_title or aid_lower in img_path):
-                matched = True
-            elif len(img_id) >= 3 and img_id in aid_lower:
-                matched = True
-            elif len(img_title) >= 3 and img_title in aid_lower:
-                matched = True
-
-            if matched:
-                if img not in matched_images:
-                    matched_images.append(img)
-                break
-
-        # Check maps
-        for m in context_maps:
-            map_id = str(m.get("id") or m.get("title") or "").lower()
-            map_title = str(m.get("title", "")).lower()
-            if aid_lower in (map_id, map_title) or (len(aid_lower) > 3 and (aid_lower in map_id or aid_lower in map_title)):
-                if m not in matched_maps:
-                    matched_maps.append(m)
-                break
-
-        # Check inclusion texts
-        for inc in inclusion_texts:
-            inc_id = str(inc.get("id") or inc.get("title") or "").lower()
-            inc_title = str(inc.get("title", "")).lower()
-            if aid_lower in (inc_id, inc_title) or (len(aid_lower) > 3 and (aid_lower in inc_id or aid_lower in inc_title)):
-                if inc not in matched_inclusions:
-                    matched_inclusions.append(inc)
-                break
-
-    return matched_menu, matched_images, matched_maps, matched_inclusions
-
-
-def _parse_llm_json_response(raw_text: str) -> dict:
-    """
-    Parse LLM structured JSON response. Robust against:
-    - Markdown code fences (```json ... ```)
-    - Think tags
-    - Partial JSON
-    Falls back to treating entire text as message if parsing fails.
-    """
-    text = raw_text.strip()
-
-    # 1. Remove think/thought/reasoning blocks
-    text = re.sub(r"<(think|thought|reasoning)>[\s\S]*?</\1>", "", text, flags=re.IGNORECASE).strip()
-    text = re.sub(r"<(think|thought|reasoning)>[\s\S]*", "", text, flags=re.IGNORECASE).strip()
-    text = re.sub(r"</?(think|thought|reasoning)>", "", text, flags=re.IGNORECASE).strip()
-
-    # 2. Remove markdown code fences
-    if text.startswith("```"):
-        parts = text.split("```")
-        text = parts[1] if len(parts) > 1 else text
-        if text.lower().startswith("json"):
-            text = text[4:].strip()
-
-    # 3. Try direct JSON parse
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict) and "message" in parsed:
-            return parsed
-    except Exception:
-        pass
-
-    # 4. Try to find JSON object in the text
-    json_match = re.search(r'\{[\s\S]*"message"\s*:\s*"[\s\S]*?\}', text)
-    if json_match:
-        try:
-            parsed = json.loads(json_match.group())
-            if isinstance(parsed, dict) and "message" in parsed:
-                return parsed
-        except Exception:
-            pass
-
-    # 5. Partial/Truncated JSON recovery: extract "message" directly
-    msg_match = re.search(r'"message"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
-    if msg_match:
-        try:
-            extracted_msg = msg_match.group(1).encode().decode("unicode_escape", errors="ignore")
-        except Exception:
-            extracted_msg = msg_match.group(1).replace(r'\"', '"').replace(r'\n', '\n')
-
-        # Also extract send_artifacts if present in the text
-        send_arts = []
-        art_match = re.search(r'"send_artifacts"\s*:\s*\[(.*?)\]', text, flags=re.DOTALL)
-        if art_match:
-            send_arts = [a.strip().strip('"').strip("'") for a in art_match.group(1).split(",") if a.strip()]
-
-        if extracted_msg and len(extracted_msg.strip()) > 0:
-            return {
-                "message": extracted_msg.strip(),
-                "send_artifacts": send_arts,
-                "context_updates": {},
-            }
-
-    # 6. Fallback: treat entire text as the message
-    clean_text = _clean_markdown(text)
-    return {
-        "message": clean_text or raw_text,
-        "send_artifacts": [],
-        "context_updates": {},
-    }
-
-
-
-def _clean_markdown(text: str) -> str:
-    if not text:
+def _build_history_text(history: list) -> str:
+    """Format past turns into a readable conversation snippet for the LLM."""
+    if len(history) <= 1:
         return ""
-
-    # 1. Remove closed <think>...</think>, <thought>...</thought>, <reasoning>...</reasoning> blocks
-    text = re.sub(r"<(think|thought|reasoning)>[\s\S]*?</\1>", "", text, flags=re.IGNORECASE).strip()
-
-    # 2. Remove unclosed <think>, <thought>, or <reasoning> blocks (e.g. max_tokens cutoff or opening tag without close)
-    if re.search(r"<(think|thought|reasoning)>", text, flags=re.IGNORECASE):
-        text = re.sub(r"<(think|thought|reasoning)>[\s\S]*", "", text, flags=re.IGNORECASE).strip()
-
-    # 3. Strip any stray closing or opening thinking tags
-    text = re.sub(r"</?(think|thought|reasoning)>", "", text, flags=re.IGNORECASE).strip()
-
-    # 4. Remove chain-of-thought / reasoning meta-monologue patterns generated by models like Qwen or DeepSeek
-    # Matches patterns like: "Here's a thinking process:", "Thinking Process:", "Conflict Resolution:", etc.
-    thought_headers = [
-        r"^Here'?s a thinking process:?[\s\S]*?(?=\n\n|\Z)",
-        r"^(?:\*?\*?(?:Thinking Process|Thought Process|Internal reasoning|Chain of Thought|Reasoning Process)\*?\*?:?)[\s\S]*?(?=\n\n|\Z)",
-        r"^(?:\*?\*?Conflict Resolution\*?\*?:?|Conflict:\*?|Decision:\*?|Re-reading the System Prompt:\*?|Re-reading the User Prompt:\*?)[\s\S]*?(?=\n\n|\Z)",
-    ]
-    for pattern in thought_headers:
-        text = re.sub(pattern, "", text, flags=re.IGNORECASE | re.MULTILINE).strip()
-
-    # 5. Check if the text is dominated by an internal conflict/reasoning debate (common in Qwen when resolving instructions)
-    # e.g., lines containing "Conflict Resolution:*", "Decision:*", "CRITICAL OUTPUT INSTRUCTIONS", "Resolution:*"
-    if any(k in text for k in ("Conflict Resolution:", "Conflict Resolution:*", "CRITICAL OUTPUT INSTRUCTIONS", "Decision:*", "Resolution:*")):
-        # Try to find where the actual answer begins (often after "Decision:*" or after the last reasoning paragraph)
-        # Look for explicit answer marker
-        answer_match = re.search(r"(?:Final Answer|Answer|Response|Assistant):\s*([\s\S]+)", text, flags=re.IGNORECASE)
-        if answer_match:
-            text = answer_match.group(1).strip()
-        else:
-            # Split into paragraphs and filter out paragraphs that contain meta-reasoning words
-            paragraphs = text.split("\n\n")
-            clean_paras = []
-            for p in paragraphs:
-                p_lower = p.lower()
-                if any(bad in p_lower for bad in (
-                    "conflict resolution", "system prompt", "user prompt", "rlhf",
-                    "critical output instructions", "hard constraint", "specific prompt instruction",
-                    "decision:*", "resolution:*", "standard constraint"
-                )):
-                    continue
-                clean_paras.append(p)
-            text = "\n\n".join(clean_paras).strip()
-
-    # 6. Light cleanup — preserve formatting for channel-specific renderers
-    # Only remove triple-or-more horizontal rules (---, ***, ___)
-    text = re.sub(r"^[-*_]{3,}\s*$", "", text, flags=re.MULTILINE)
-    # Condense excessive blank lines
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
-
-
-async def _filter_thinking_stream(raw_stream):
-    """
-    Suppresses <think>...</think>, <thought>...</thought>, and <reasoning>...</reasoning> blocks
-    in real-time during token streaming so internal reasoning is never emitted to the user.
-    """
-    in_think = False
-    buffer = ""
-    emitted_any = False
-    think_accumulator = ""
-
-    async for chunk in raw_stream:
-        buffer += chunk
-
-        while buffer:
-            if not in_think:
-                lower_buf = buffer.lower()
-                think_pos = lower_buf.find("<think>")
-                thought_pos = lower_buf.find("<thought>")
-                reason_pos = lower_buf.find("<reasoning>")
-
-                positions = [p for p in (think_pos, thought_pos, reason_pos) if p != -1]
-                if positions:
-                    first_pos = min(positions)
-                    pre_text = buffer[:first_pos]
-                    if pre_text:
-                        if not emitted_any:
-                            pre_text = re.sub(r"^Here'?s a thinking process:?\s*", "", pre_text, flags=re.IGNORECASE)
-                        if pre_text:
-                            emitted_any = True
-                            yield pre_text
-
-                    tag_len = 7 if (first_pos == think_pos) else (9 if first_pos == thought_pos else 11)
-                    buffer = buffer[first_pos + tag_len:]
-                    in_think = True
-                else:
-                    tag_start = buffer.rfind("<")
-                    if tag_start != -1 and (len(buffer) - tag_start) <= 11 and (
-                        "<think>".startswith(buffer[tag_start:].lower()) or
-                        "<thought>".startswith(buffer[tag_start:].lower()) or
-                        "<reasoning>".startswith(buffer[tag_start:].lower())
-                    ):
-                        emit_text = buffer[:tag_start]
-                        buffer = buffer[tag_start:]
-                        if emit_text:
-                            if not emitted_any:
-                                emit_text = re.sub(r"^Here'?s a thinking process:?\s*", "", emit_text, flags=re.IGNORECASE)
-                            if emit_text:
-                                emitted_any = True
-                                yield emit_text
-                        break
-                    else:
-                        emit_text = buffer
-                        buffer = ""
-                        if not emitted_any:
-                            emit_text = re.sub(r"^Here'?s a thinking process:?\s*", "", emit_text, flags=re.IGNORECASE)
-                        if emit_text:
-                            emitted_any = True
-                            yield emit_text
-            else:
-                lower_buf = buffer.lower()
-                close_think = lower_buf.find("</think>")
-                close_thought = lower_buf.find("</thought>")
-                close_reason = lower_buf.find("</reasoning>")
-
-                close_positions = [p for p in (close_think, close_thought, close_reason) if p != -1]
-                if close_positions:
-                    first_close = min(close_positions)
-                    think_accumulator += buffer[:first_close]
-                    tag_len = 8 if (first_close == close_think) else (10 if first_close == close_thought else 12)
-                    buffer = buffer[first_close + tag_len:]
-                    in_think = False
-                else:
-                    close_tag_start = buffer.rfind("<")
-                    if close_tag_start != -1 and (len(buffer) - close_tag_start) <= 12 and (
-                        "</think>".startswith(buffer[close_tag_start:].lower()) or
-                        "</thought>".startswith(buffer[close_tag_start:].lower()) or
-                        "</reasoning>".startswith(buffer[close_tag_start:].lower())
-                    ):
-                        think_accumulator += buffer[:close_tag_start]
-                        buffer = buffer[close_tag_start:]
-                        break
-                    else:
-                        think_accumulator += buffer
-                        buffer = ""
-
-    if not emitted_any:
-        fallback_text = _clean_markdown(think_accumulator or buffer)
-        if fallback_text:
-            yield fallback_text
-
-
-def _parse_json_response(text: str) -> dict:
-    """Best-effort JSON extraction from an LLM response."""
-    text = text.strip()
-    if text.startswith("```"):
-        parts = text.split("```")
-        text = parts[1] if len(parts) > 1 else text
-        if text.startswith("json"):
-            text = text[4:]
-    try:
-        return json.loads(text.strip())
-    except Exception:
-        return {}
-
-
-# ── Enhancement 4: Query-time metadata extraction ────────────────────────────
-
-_QUERY_METADATA_PROMPT = """Extract metadata from this user question as JSON.
-
-Question: {query}
-
-Return ONLY a JSON object:
-{{
-  "year": "1st | 2nd | 3rd | 4th | null",
-  "semester": "1 | 2 | null",
-  "department": "department name or null",
-  "course": "course name or null"
-}}
-Use null for any field not mentioned. Return ONLY valid JSON."""
-
-
-async def _extract_query_metadata(query: str, llm: LLMProvider) -> dict:
-    try:
-        resp = await llm.generate(_QUERY_METADATA_PROMPT.format(query=query), temperature=0.0, max_tokens=150)
-        return _parse_json_response(resp.text)
-    except Exception:
-        return {}
-
-
-def _build_where_filter(metadata: dict) -> Optional[dict]:
-    """
-    Build a ChromaDB `where` filter from query metadata.
-    Only filter on fields that were explicitly mentioned in the query.
-    """
-    conditions = []
-    for key in ("year", "semester", "department", "course"):
-        val = metadata.get(key)
-        if val and val != "null":
-            conditions.append({key: {"$eq": val}})
-    if not conditions:
-        return None
-    if len(conditions) == 1:
-        return conditions[0]
-    return {"$and": conditions}
-
-
-
-
-# ── Enhancement 5: HyDE ──────────────────────────────────────────────────────
-
-_HYDE_PROMPT = """Write a brief, factual answer to this question as if it came from an official document.
-Keep it under 100 words. Be specific and direct.
-
-Question: {query}
-Answer:"""
-
-# Circuit breaker: skip HyDE for 60s after 3 consecutive failures
-_hyde_fail_count = 0
-_hyde_open_until: float = 0.0
-
-
-async def _hypothetical_embedding(
-    query: str, llm: LLMProvider, embeddings: EmbeddingProvider
-) -> list[float]:
-    """Generate a hypothetical answer and embed it for richer semantic retrieval."""
-    global _hyde_fail_count, _hyde_open_until
-
-    if time.time() < _hyde_open_until:
-        return await embeddings.embed_query(query)
-
-    try:
-        resp = await llm.generate(
-            _HYDE_PROMPT.format(query=query), temperature=0.1, max_tokens=150
-        )
-        _hyde_fail_count = 0
-        hyp_text = resp.text.strip()
-        return await embeddings.embed_query(hyp_text)
-    except Exception as e:
-        _hyde_fail_count += 1
-        if _hyde_fail_count >= 3:
-            _hyde_open_until = time.time() + 60.0
-            _hyde_fail_count = 0
-            logger.warning("HyDE circuit breaker opened for 60s (quota/rate-limit pressure)")
-        else:
-            logger.debug("HyDE skipped, falling back to query embedding: %s", type(e).__name__)
-        return await embeddings.embed_query(query)
-
-
-# ── Enhancement 1: Clarification detection ───────────────────────────────────
-
-_CLARIFICATION_PROMPT = """You are a helpful assistant deciding whether a user's question needs clarification before it can be answered accurately.
-
-User question: "{query}"
-
-Retrieved context snippets (these are what we found in our knowledge base):
-{context_snippets}
-
-Decide if the user's question is too vague or broad to answer accurately based on the retrieved snippets.
-A question needs clarification when:
-- The context provides multiple completely different answers depending on a missing detail (e.g., year, department).
-- The question is out of context and you need more specifics to help them.
-
-If you can provide a helpful, general answer covering the possibilities, do that instead of asking for clarification.
-If you DO need clarification, write ONE short, polite, and customer-friendly question (max 15 words) asking for the missing detail.
-Otherwise, return needs_clarification: false.
-
-Respond ONLY with valid JSON (no markdown, no explanation):
-{"needs_clarification": true, "question": "Which department are you asking about?"}
-or
-{"needs_clarification": false}"""
-
-
-async def _check_clarification(
-    query: str,
-    candidates: list[dict],
-    llm: LLMProvider,
-    history: list | None = None,
-) -> Optional[str]:
-    """
-    Decide if the query needs clarification before a good answer can be given.
-
-    Two-pass approach:
-    1. Fast heuristics: skip unless there is genuine metadata diversity OR
-       very low confidence across all retrieved chunks.
-    2. If heuristic fires, ask LLM to confirm and generate the question.
-    Returns a clarifying question string, or None if the answer can proceed.
-    """
-    if not candidates:
-        return None
-
-    # ── Skip if user is answering a previous clarification ───────────────────
-    # If the last assistant message ended with "?", the user is replying to our
-    # clarification — don't loop back into another clarification check.
-    if history:
-        for msg in reversed(history[:-1]):  # exclude last user message
-            if msg.get("role") == "assistant":
-                if str(msg.get("content", "")).strip().endswith("?"):
-                    return None
-                break  # only look at the most recent assistant turn
-
-    # ── Skip for very short clarification-answering patterns ─────────────────
-    # A reply like "Computer Science" or "3rd year CSE" should go straight to answer.
-    query_words = query.strip().split()
-    if len(query_words) <= 4 and not any(
-        w in query.lower() for w in ("what", "who", "when", "where", "how", "which", "why")
-    ):
-        return None
-
-    # ── Heuristic 1: metadata diversity ──────────────────────────────────────
-    entity_keys = ("year", "semester", "department", "course")
-    diversity: dict[str, set] = {k: set() for k in entity_keys}
-    for c in candidates:
-        meta = c.get("metadata", {})
-        for k in entity_keys:
-            val = meta.get(k)
-            if val and val not in ("null", None, ""):
-                diversity[k].add(str(val))
-
-    # Require at least 3 distinct values in a field to flag ambiguity
-    has_metadata_ambiguity = any(len(v) >= 3 for v in diversity.values())
-
-    # ── Heuristic 2: very low confidence ─────────────────────────────────────
-    scores = [c.get("score", 0.0) for c in candidates]
-    top_score = max(scores) if scores else 0.0
-    # Flag when top retrieval score is fairly low and there are multiple candidates
-    low_confidence = top_score < 0.35 and len(candidates) >= 3
-
-    if not has_metadata_ambiguity and not low_confidence:
-        return None
-
-    # ── LLM-based clarification check ────────────────────────────────────────
-    snippets = []
-    for i, c in enumerate(candidates[:4], 1):
-        text = c.get("text", "")[:120].replace("\n", " ")
-        snippets.append(f"{i}. {text}…")
-    context_snippets = "\n".join(snippets)
-
-    try:
-        await _rate_limiter.acquire()
-        resp = await llm.generate(
-            _CLARIFICATION_PROMPT.format(query=query, context_snippets=context_snippets),
-            temperature=0.0,
-            max_tokens=80,
-        )
-        data = _parse_json_response(resp.text)
-        if data.get("needs_clarification") and data.get("question"):
-            return str(data["question"])
-    except Exception as e:
-        logger.debug("Clarification check failed: %s", type(e).__name__)
-
-    return None
-
-
-# ── Sub-question decomposition (unchanged) ────────────────────────────────────
-
-async def _decompose_question(message: str, llm: LLMProvider) -> list[str]:
-    prompt = f"""You are a query decomposition assistant.
-Given a user question, break it into 1-3 focused sub-questions for a knowledge base lookup.
-If the question is already simple, return just the original question.
-
-User question: {message}
-
-Return ONLY a numbered list of sub-questions, nothing else."""
-    response = await llm.generate(prompt, temperature=0.0, max_tokens=200)
-    lines = [l.strip() for l in response.text.strip().splitlines() if l.strip()]
-    sub_questions = [line.lstrip("0123456789. ").strip() for line in lines if line]
-    return [q for q in sub_questions if q] or [message]
-
-
-# ── Enhancement 7: Context-Adaptive RAG Query Resolution ──────────────────────
-
-_CONTEXT_REWRITE_PROMPT = """You are a precise search query reformulator for an institutional knowledge assistant.
-Given the conversation history, active user session context, and latest user message, rewrite the user's latest message into a single standalone, unambiguous search query for vector retrieval.
-
-Instructions:
-1. If the user refers to something from previous turns with pronouns ("it", "its", "they", "their", "this", "that", "those", "same"), replace them with the explicit subject/entity mentioned previously or in the active user session context.
-2. If the user asks a follow-up fragment (e.g. "what is the fee structure?", "how to apply?", "eligibility?", "duration?"), combine it with the active interested course or qualification from the Active User Session Profile Context (e.g. "Finance & Accounting course fee structure for B.Com graduate").
-3. Specific tracking criteria for this institution:
-{context_instructions}
-4. If the latest user message is already clear, complete, and self-contained, or is a simple greeting, return it UNCHANGED.
-5. Do NOT answer the question. Do NOT add preamble or reasoning. Return ONLY the rewritten search query.
-
-{user_context_block}Conversation history:
-{history_text}
-
-Latest user message: {query}
-Standalone search query:"""
-
-
-async def _resolve_contextual_query(
-    query: str,
-    history: list,
-    llm: LLMProvider,
-    context_mode: str = "none",
-    context_instructions: str = "",
-    context_capacity: int = 4,
-    context_variables: Optional[dict] = None,
-) -> str:
-    """
-    Context-Adaptive RAG: resolves pronouns, elided subjects, and conversational context
-    into a self-contained search query before vector retrieval.
-    """
-    effective_mode = context_mode or "none"
-
-    if effective_mode == "none":
-        return query
-
-    user_context_block = ""
-    if context_variables:
-        active_vars = [f"• {k.replace('_', ' ').title()}: {v}" for k, v in context_variables.items() if v]
-        if active_vars:
-            user_context_block = "Active User Session Profile Context:\n" + "\n".join(active_vars) + "\n\n"
-
-    # If history is empty but we have context_variables (e.g. interested_course / qualification)
-    if not history or len(history) <= 1:
-        if not context_variables or not any(k in context_variables for k in ("interested_course", "target_course", "qualification")):
-            return query
-
-    # Trim history to context_capacity turns (each turn has user+assistant = 2 msgs)
-    history_slice = history[-(context_capacity * 2 + 1):-1] if history else []
-
-    # In adaptive mode, check if rewrite is needed (pronoun / fragment / elision)
-    if effective_mode == "adaptive":
-        lower = query.lower().strip()
-        pronoun_triggers = {
-            "it", "its", "they", "them", "their", "theirs", "this", "that", "these", "those",
-            "he", "him", "his", "she", "her", "hers", "same", "there", "then", "above", "mentioned"
-        }
-        words = re.findall(r"\b\w+\b", lower)
-        has_pronoun = any(w in pronoun_triggers for w in words)
-        is_fragment = len(words) <= 5 and any(w in lower for w in (
-            "fee", "fees", "cost", "eligibility", "process", "date", "deadline", "how", "what", "where",
-            "when", "apply", "criteria", "contact", "syllabus", "hostel", "cutoff", "quota", "seat",
-            "timing", "requirement", "placement", "faculty", "location", "address", "structure", "duration"
-        ))
-        # If query is already long and has no pronoun/fragment, skip rewrite
-        if not has_pronoun and not is_fragment and len(words) > 6 and not user_context_block:
-            return query
-
-    lines = []
-    for msg in history_slice:
-        role = "User" if msg.get("role") == "user" else "Assistant"
-        content = str(msg.get("content", "")).strip().replace("\n", " ")
-        if content:
-            lines.append(f"{role}: {content[:200]}")
-    history_text = "\n".join(lines)
-    if not history_text and not user_context_block:
-        return query
-
-    instructions = context_instructions.strip() if context_instructions else "Preserve specific courses, branches, departments, dates, fees, and admission criteria."
-
-    try:
-        await _rate_limiter.acquire()
-        prompt = _CONTEXT_REWRITE_PROMPT.format(
-            query=query,
-            user_context_block=user_context_block,
-            history_text=history_text or "No previous history turns.",
-            context_instructions=instructions,
-        )
-        resp = await llm.generate(prompt, temperature=0.0, max_tokens=100)
-        rewritten = _clean_markdown(resp.text).strip().strip('"').strip("'")
-        if rewritten and len(rewritten) >= 3 and not rewritten.lower().startswith(("here is", "i have", "rewritten", "standalone")):
-            logger.info("Contextual RAG query resolved: '%s' -> '%s' (user_context=%s)", query, rewritten, context_variables)
-            return rewritten
-    except Exception as e:
-        logger.debug("Contextual query rewrite failed: %s", e)
-
-    return query
-
-
-# ── Core retrieval (shared by query() and query_stream()) ─────────────────────
-
-async def _retrieve_and_rerank(
-    client_id: str,
-    message: str,
-    llm: LLMProvider,
-    embeddings: EmbeddingProvider,
-    vectordb: VectorStoreProvider,
-) -> tuple[list[dict], list[dict]]:
-    """
-    Runs the Hybrid Retrieval Pipeline:
-      - Optional HyDE embedding
-      - Optional metadata filtering
-      - Sub-question decomposition (for complex multi-part queries)
-      - Dense vector search (ChromaDB / VectorStore)
-      - Sparse keyword search (In-memory BM25 index)
-      - Reciprocal Rank Fusion (RRF) to combine dense + sparse candidate scores
-      - Cross-encoder reranking for top precision
-    Returns (all_sources, reranked_candidates).
-    """
-    DECOMPOSE_SIGNALS = ["and", "also", "as well", "additionally", "what about", "along with"]
-    words = message.lower().split()
-    should_decompose = (
-        len(words) > 12
-        and any(sig in message.lower() for sig in DECOMPOSE_SIGNALS)
-        and message.count("?") > 1
-    )
-
-    if should_decompose:
-        sub_questions = await _decompose_question(message, llm)
-        await _rate_limiter.acquire()
-    else:
-        sub_questions = [message]
-
-    # Enhancement 4: extract metadata from query for pre-filtering
-    query_meta = await _extract_query_metadata(message, llm)
-    where_filter = _build_where_filter(query_meta)
-    if where_filter:
-        logger.debug(f"Applying metadata filter: {where_filter}")
-
-    # Ensure BM25 index is prepared for this tenant
-    bm25_index = await bm25_registry.ensure_indexed(client_id)
-
-    seen_chunks: set[str] = set()
-    all_candidates: list[dict] = []
-
-    for sq in sub_questions:
-        # Enhancement 5: HyDE
-        if settings.HYDE_ENABLED and not _is_lightweight_query(sq):
-            await _rate_limiter.acquire()
-            sq_embedding = await _hypothetical_embedding(sq, llm, embeddings)
-        else:
-            sq_embedding = await embeddings.embed_query(sq)
-
-        # 1. Dense vector candidate retrieval
-        dense_candidates = await vectordb.search(
-            client_id,
-            sq_embedding,
-            top_k=25,
-            where=where_filter,
-        )
-
-        # 2. Sparse BM25 keyword candidate retrieval
-        sparse_candidates = bm25_index.search(sq, top_k=25)
-
-        # 3. Hybrid fusion via Reciprocal Rank Fusion (RRF)
-        fused_sq_candidates = reciprocal_rank_fusion(
-            dense_results=dense_candidates,
-            sparse_results=sparse_candidates,
-            top_k=25,
-            dense_weight=0.6,
-            sparse_weight=0.4,
-        )
-
-        for r in fused_sq_candidates:
-            chunk_key = f"{r.get('metadata', {}).get('doc_id','')}_{r.get('metadata', {}).get('chunk_index','')}"
-            if chunk_key not in seen_chunks:
-                seen_chunks.add(chunk_key)
-                all_candidates.append(r)
-
-    if not all_candidates:
-        return [], []
-
-    # Enhancement 2: Cross-encoder reranking
-    if settings.RERANK_ENABLED and len(all_candidates) > settings.RETRIEVAL_TOP_K:
-        top_candidates = await reranker_util.rerank(
-            message, all_candidates, top_k=settings.RETRIEVAL_TOP_K
-        )
-    else:
-        top_candidates = all_candidates[:settings.RETRIEVAL_TOP_K]
-
-    all_sources = []
-    seen_docs = set()
-    for c in top_candidates:
-        doc_id = c.get("metadata", {}).get("doc_id", "")
-        if doc_id not in seen_docs:
-            seen_docs.add(doc_id)
-            all_sources.append({
-                "doc_id": doc_id,
-                "filename": c.get("metadata", {}).get("filename", ""),
-                "chunk_index": c.get("metadata", {}).get("chunk_index", 0),
-                "score": round(c.get("score", 0.0), 3),
-                "text_preview": c.get("text", "")[:200],
-            })
-
-    return all_sources, top_candidates
+    lines = ["\nRecent conversation:"]
+    for msg in history[:-1]:
+        role = "User" if msg["role"] == "user" else "Assistant"
+        lines.append(f"{role}: {msg['content']}")
+    return "\n".join(lines)
 
 
 def _build_rag_prompt(
@@ -849,8 +169,7 @@ def _build_rag_prompt(
     context_variables: Optional[dict] = None,
     artifact_delivery_history: str = "",
 ) -> str:
-    """Build the user-turn prompt for the unified LLM call.
-    The system prompt (with artifact catalog + JSON instructions) is passed separately."""
+    """Build the user-turn prompt for the unified LLM call."""
     user_context_block = ""
     if context_variables:
         active_vars = [f"• {k.replace('_', ' ').title()}: {v}" for k, v in context_variables.items() if v]
@@ -875,6 +194,50 @@ User message: {message}
 Remember: respond with the JSON format specified in your instructions. Include your conversational response in "message", any artifact IDs to attach in "send_artifacts", and any new user context you extracted in "context_updates"."""
 
 
+def _get_fallback_llm(current_llm: LLMProvider) -> LLMProvider:
+    """Select fallback LLM when primary provider is rate-limited."""
+    model_name = current_llm.get_model_name().lower()
+    if ("gemini" in model_name or model_name.startswith("models/")) and settings.GROQ_API_KEY:
+        from app.providers.llm.groq import GroqProvider
+        return GroqProvider(api_key=settings.GROQ_API_KEY, model=settings.GROQ_MODEL)
+    if model_name.startswith("llama") and settings.GEMINI_API_KEY:
+        from app.providers.llm.gemini import GeminiProvider
+        return GeminiProvider(api_key=settings.GEMINI_API_KEY, model=settings.GEMINI_MODEL)
+    if settings.OLLAMA_URL:
+        from app.providers.llm.ollama import OllamaProvider
+        return OllamaProvider(base_url=settings.OLLAMA_URL)
+    return current_llm
+
+
+async def _log_query(
+    client_id: str,
+    session_id: str,
+    query_text: str,
+    response: str,
+    sources: list,
+    response_time_ms: int,
+    model: str,
+    usage: dict,
+    channel: str = "widget",
+) -> None:
+    db = get_db()
+    await db[QUERY_LOGS].insert_one({
+        "client_id": client_id,
+        "session_id": session_id,
+        "query": query_text,
+        "response": response,
+        "sources": sources,
+        "response_time_ms": response_time_ms,
+        "llm_provider": model,
+        "tokens_used": usage,
+        "channel": channel,
+        "created_at": datetime.now(timezone.utc),
+    })
+
+
+def get_remaining_quota() -> int:
+    return _rate_limiter.remaining_daily
+
 
 # ── Public API: non-streaming ─────────────────────────────────────────────────
 
@@ -889,6 +252,10 @@ async def query(
     context_variables: Optional[dict] = None,
     session_state: Optional[Any] = None,
 ) -> dict:
+    """
+    Main non-streaming RAG entrypoint:
+    Orchestrates session, context retrieval, LLM generation, and artifact resolution.
+    """
     start = time.time()
     db = get_db()
 
@@ -898,8 +265,7 @@ async def query(
     client = await db[CLIENTS].find_one({"client_id": client_id})
     cs = (client or {}).get("settings", {})
 
-    # Load pre-compiled client runtime profile snapshot (O(1) in-memory cache)
-    from app.services.profile_compiler import get_compiled_profile
+    # Load pre-compiled client runtime profile snapshot
     profile = await get_compiled_profile(client_id, channel)
     system_prompt = profile.get("compiled_system_prompt") or DEFAULT_SYSTEM_PROMPT
     ctx_cfg = profile.get("context_config", {})
@@ -907,7 +273,7 @@ async def query(
     raw_cap = ctx_cfg.get("capacity") if ctx_cfg.get("capacity") is not None else cs.get("context_capacity")
     context_capacity = int(raw_cap) if raw_cap is not None else 4
 
-    # Extract dynamic user name from introduction patterns (e.g. "I am Tarun", "my name is Amit")
+    # Extract dynamic visitor name
     extracted_name = extract_user_name(message)
     if context_variables is None:
         context_variables = {}
@@ -920,15 +286,13 @@ async def query(
 
     # Context history loading
     if context_mode == "none" or context_capacity <= 0:
-        max_history = 0
         history = []
     else:
         configured_history = int(cs.get("max_history_turns", 3) or 3)
         max_history = min(configured_history, context_capacity) if context_capacity > 0 else configured_history
         history = await get_history(session_id, max_turns=max_history)
 
-    # Session query limit
-    from app.services.chat_service import count_session_queries
+    # Session query limit check
     query_count = await count_session_queries(session_id)
     _setup_cfg = get_setup((client or {}).get("settings", {}), channel)
     max_qs = _setup_cfg.get("max_queries_per_session", 50)
@@ -940,27 +304,27 @@ async def query(
         return {"response": limit_msg, "sources": [], "session_id": session_id}
 
     history_text = _build_history_text(history)
-    artifact_delivery_history = _build_artifact_delivery_history(session_state)
+    artifact_delivery_history = build_artifact_delivery_history(session_state)
 
-    # If lightweight query (e.g. pure greeting/pleasantry), skip vector retrieval
+    # Context retrieval via modular retrieval service
     is_light = _is_lightweight_query(message)
     all_sources = []
-    top_candidates = []
     context = ""
 
     if not is_light:
-        search_query = await _resolve_contextual_query(
-            message,
-            history,
-            llm,
+        context, all_sources, _ = await retrieve_context(
+            client_id=client_id,
+            message=message,
+            history=history,
+            llm=llm,
+            embeddings=embeddings,
+            vectordb=vectordb,
             context_mode=context_mode,
             context_instructions=ctx_cfg.get("instructions", ""),
             context_capacity=context_capacity,
             context_variables=context_variables,
+            rate_limiter=_rate_limiter,
         )
-        all_sources, top_candidates = await _retrieve_and_rerank(client_id, search_query, llm, embeddings, vectordb)
-        if top_candidates:
-            context = "\n\n---\n\n".join(c["text"] for c in top_candidates)
 
     prompt = _build_rag_prompt(
         context=context,
@@ -974,17 +338,18 @@ async def query(
     if not can_proceed:
         llm = _get_fallback_llm(llm)
 
-    llm_response = await llm.generate(
+    llm_response_obj = await llm.generate(
         prompt,
         system_prompt=system_prompt,
         temperature=0.3,
         max_tokens=1024,
     )
 
-    parsed = _parse_llm_json_response(llm_response.text)
+    # Parse structured JSON response
+    parsed = parse_llm_json_response(llm_response_obj.text)
     text = parsed.get("message", "").strip()
     if not text:
-        text = _clean_markdown(llm_response.text)
+        text = clean_markdown(llm_response_obj.text)
     if not text or len(text.strip()) == 0:
         text = FALLBACK_MESSAGE
 
@@ -995,25 +360,10 @@ async def query(
             if isinstance(v, str) and v.strip() and v.lower() != "null":
                 context_variables[k] = v.strip()
 
-    matched_menu, matched_images, matched_maps, matched_inclusions = _resolve_artifacts(artifact_ids, profile)
-
-    # Safety net 1: If no menu was attached by LLM, check if initial greeting / first interaction
-    # requires MENU_ROOT that hasn't been shown yet this session
-    if matched_menu is None and (is_light or not history):
-        for node in profile.get("menu_tree", []):
-            desc = (node.get("descriptor_tag") or "").lower()
-            if any(k in desc for k in ("start of conversation", "initial greeting", "first message", "first interaction", "first chat", "mandatory")):
-                m_id = str(node.get("id") or node.get("node_id") or "")
-                if session_state and not session_state.was_artifact_shown("menu", m_id):
-                    matched_menu = node
-                    break
-
-
-    # If inclusion texts were selected, ensure their snippet content is appended if not already in text
-    for inc in matched_inclusions:
-        inc_content = inc.get("content") or inc.get("text", "")
-        if inc_content and inc_content.lower() not in text.lower():
-            text = f"{text}\n\n{inc_content}".strip()
+    # Resolve UI artifact components via modular artifacts service
+    matched_menu, matched_images, matched_maps, matched_inclusions = resolve_artifacts(artifact_ids, profile)
+    matched_menu = apply_artifact_safety_nets(matched_menu, profile, session_state=session_state, is_light=is_light, history=history)
+    text = append_inclusion_content(text, matched_inclusions)
 
     await add_message(session_id, "assistant", text, all_sources)
     response_time = int((time.time() - start) * 1000)
@@ -1024,8 +374,8 @@ async def query(
         text,
         all_sources,
         response_time,
-        llm_response.model,
-        llm_response.usage,
+        llm_response_obj.model,
+        llm_response_obj.usage,
         channel=channel,
     )
 
@@ -1054,6 +404,10 @@ async def query_stream(
     context_variables: Optional[dict] = None,
     session_state: Optional[Any] = None,
 ):
+    """
+    Main streaming RAG entrypoint:
+    Orchestrates session, context retrieval, LLM streaming generation, and artifact resolution.
+    """
     start = time.time()
     db = get_db()
 
@@ -1063,7 +417,6 @@ async def query_stream(
     client = await db[CLIENTS].find_one({"client_id": client_id})
     cs = (client or {}).get("settings", {})
 
-    from app.services.profile_compiler import get_compiled_profile
     profile = await get_compiled_profile(client_id, channel)
     system_prompt = profile.get("compiled_system_prompt") or DEFAULT_SYSTEM_PROMPT
     ctx_cfg = profile.get("context_config", {})
@@ -1082,14 +435,12 @@ async def query_stream(
         system_prompt += f"\n\nMANDATORY VISITOR IDENTITY INSTRUCTION:\n- Visitor's active name is '{active_name}'. Always address them warmly as '{active_name}' in your response."
 
     if context_mode == "none" or context_capacity <= 0:
-        max_history = 0
         history = []
     else:
         configured_history = int(cs.get("max_history_turns", 3) or 3)
         max_history = min(configured_history, context_capacity) if context_capacity > 0 else configured_history
         history = await get_history(session_id, max_turns=max_history)
 
-    from app.services.chat_service import count_session_queries
     query_count = await count_session_queries(session_id)
     _setup_cfg = get_setup((client or {}).get("settings", {}), channel)
     max_qs = _setup_cfg.get("max_queries_per_session", 50)
@@ -1103,26 +454,26 @@ async def query_stream(
         return
 
     history_text = _build_history_text(history)
-    artifact_delivery_history = _build_artifact_delivery_history(session_state)
+    artifact_delivery_history = build_artifact_delivery_history(session_state)
 
     is_light = _is_lightweight_query(message)
     all_sources = []
-    top_candidates = []
     context = ""
 
     if not is_light:
-        search_query = await _resolve_contextual_query(
-            message,
-            history,
-            llm,
+        context, all_sources, _ = await retrieve_context(
+            client_id=client_id,
+            message=message,
+            history=history,
+            llm=llm,
+            embeddings=embeddings,
+            vectordb=vectordb,
             context_mode=context_mode,
             context_instructions=ctx_cfg.get("instructions", ""),
             context_capacity=context_capacity,
             context_variables=context_variables,
+            rate_limiter=_rate_limiter,
         )
-        all_sources, top_candidates = await _retrieve_and_rerank(client_id, search_query, llm, embeddings, vectordb)
-        if top_candidates:
-            context = "\n\n---\n\n".join(c["text"] for c in top_candidates)
 
     prompt = _build_rag_prompt(
         context=context,
@@ -1136,17 +487,17 @@ async def query_stream(
     if not can_proceed:
         llm = _get_fallback_llm(llm)
 
-    llm_response = await llm.generate(
+    llm_response_obj = await llm.generate(
         prompt,
         system_prompt=system_prompt,
         temperature=0.3,
         max_tokens=1024,
     )
 
-    parsed = _parse_llm_json_response(llm_response.text)
+    parsed = parse_llm_json_response(llm_response_obj.text)
     text = parsed.get("message", "").strip()
     if not text:
-        text = _clean_markdown(llm_response.text)
+        text = clean_markdown(llm_response_obj.text)
     if not text or len(text.strip()) == 0:
         text = FALLBACK_MESSAGE
 
@@ -1157,25 +508,9 @@ async def query_stream(
             if isinstance(v, str) and v.strip() and v.lower() != "null":
                 context_variables[k] = v.strip()
 
-    matched_menu, matched_images, matched_maps, matched_inclusions = _resolve_artifacts(artifact_ids, profile)
-
-    # Safety net 1: If no menu was attached by LLM, check if initial greeting / first interaction
-    # requires MENU_ROOT that hasn't been shown yet this session
-    if matched_menu is None and (is_light or not history):
-        for node in profile.get("menu_tree", []):
-            desc = (node.get("descriptor_tag") or "").lower()
-            if any(k in desc for k in ("start of conversation", "initial greeting", "first message", "first interaction", "first chat", "mandatory")):
-                m_id = str(node.get("id") or node.get("node_id") or "")
-                if session_state and not session_state.was_artifact_shown("menu", m_id):
-                    matched_menu = node
-                    break
-
-
-    # If inclusion texts were selected, ensure their snippet content is appended if not already in text
-    for inc in matched_inclusions:
-        inc_content = inc.get("content") or inc.get("text", "")
-        if inc_content and inc_content.lower() not in text.lower():
-            text = f"{text}\n\n{inc_content}".strip()
+    matched_menu, matched_images, matched_maps, matched_inclusions = resolve_artifacts(artifact_ids, profile)
+    matched_menu = apply_artifact_safety_nets(matched_menu, profile, session_state=session_state, is_light=is_light, history=history)
+    text = append_inclusion_content(text, matched_inclusions)
 
     await add_message(session_id, "assistant", text, all_sources)
     response_time = int((time.time() - start) * 1000)
@@ -1186,8 +521,8 @@ async def query_stream(
         text,
         all_sources,
         response_time,
-        llm_response.model,
-        llm_response.usage,
+        llm_response_obj.model,
+        llm_response_obj.usage,
         channel=channel,
     )
 
@@ -1201,58 +536,3 @@ async def query_stream(
         "context_maps": matched_maps,
         "inclusion_texts": matched_inclusions,
     }
-
-
-# ── Private helpers ───────────────────────────────────────────────────────────
-
-def _build_history_text(history: list) -> str:
-    if len(history) <= 1:
-        return ""
-    lines = ["\nRecent conversation:"]
-    for msg in history[:-1]:
-        role = "User" if msg["role"] == "user" else "Assistant"
-        lines.append(f"{role}: {msg['content']}")
-    return "\n".join(lines)
-
-
-def _get_fallback_llm(current_llm: LLMProvider) -> LLMProvider:
-    # Try Groq if not current, then Gemini, then Ollama
-    from app.config import settings
-    model_name = current_llm.get_model_name().lower()
-    # If current is Gemini and Groq is available, fallback to Groq
-    if ("gemini" in model_name or model_name.startswith("models/")) and settings.GROQ_API_KEY:
-        from app.providers.llm.groq import GroqProvider
-        return GroqProvider(api_key=settings.GROQ_API_KEY, model=settings.GROQ_MODEL)
-    # If current is Groq and Gemini is available, fallback to Gemini
-    if model_name.startswith("llama") and settings.GEMINI_API_KEY:
-        from app.providers.llm.gemini import GeminiProvider
-        return GeminiProvider(api_key=settings.GEMINI_API_KEY, model=settings.GEMINI_MODEL)
-    # Otherwise, fallback to Ollama if available
-    if settings.OLLAMA_URL:
-        from app.providers.llm.ollama import OllamaProvider
-        return OllamaProvider(base_url=settings.OLLAMA_URL)
-    return current_llm
-
-
-async def _log_query(
-    client_id: str, session_id: str, query_text: str, response: str,
-    sources: list, response_time_ms: int, model: str, usage: dict,
-    channel: str = "widget",
-) -> None:
-    db = get_db()
-    await db[QUERY_LOGS].insert_one({
-        "client_id": client_id,
-        "session_id": session_id,
-        "query": query_text,
-        "response": response,
-        "sources": sources,
-        "response_time_ms": response_time_ms,
-        "llm_provider": model,
-        "tokens_used": usage,
-        "channel": channel,
-        "created_at": datetime.now(timezone.utc),
-    })
-
-
-def get_remaining_quota() -> int:
-    return _rate_limiter.remaining_daily
