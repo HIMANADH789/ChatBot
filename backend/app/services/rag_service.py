@@ -112,6 +112,10 @@ def _is_lightweight_query(message: str) -> bool:
     return False
 
 
+# Alias for backward compatibility across retrieval helpers
+_is_conversational = _is_lightweight_query
+
+
 def _build_artifact_delivery_history(session_state) -> str:
     """Build a summary of which artifacts have already been sent this session."""
     if not session_state or not hasattr(session_state, "state_flags"):
@@ -224,7 +228,28 @@ def _parse_llm_json_response(raw_text: str) -> dict:
         except Exception:
             pass
 
-    # 5. Fallback: treat entire text as the message
+    # 5. Partial/Truncated JSON recovery: extract "message" directly
+    msg_match = re.search(r'"message"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+    if msg_match:
+        try:
+            extracted_msg = msg_match.group(1).encode().decode("unicode_escape", errors="ignore")
+        except Exception:
+            extracted_msg = msg_match.group(1).replace(r'\"', '"').replace(r'\n', '\n')
+
+        # Also extract send_artifacts if present in the text
+        send_arts = []
+        art_match = re.search(r'"send_artifacts"\s*:\s*\[(.*?)\]', text, flags=re.DOTALL)
+        if art_match:
+            send_arts = [a.strip().strip('"').strip("'") for a in art_match.group(1).split(",") if a.strip()]
+
+        if extracted_msg and len(extracted_msg.strip()) > 0:
+            return {
+                "message": extracted_msg.strip(),
+                "send_artifacts": send_arts,
+                "context_updates": {},
+            }
+
+    # 6. Fallback: treat entire text as the message
     clean_text = _clean_markdown(text)
     return {
         "message": clean_text or raw_text,
@@ -747,7 +772,7 @@ async def _retrieve_and_rerank(
 
     for sq in sub_questions:
         # Enhancement 5: HyDE
-        if settings.HYDE_ENABLED and not _is_conversational(sq):
+        if settings.HYDE_ENABLED and not _is_lightweight_query(sq):
             await _rate_limiter.acquire()
             sq_embedding = await _hypothetical_embedding(sq, llm, embeddings)
         else:
@@ -943,7 +968,7 @@ async def query(
         prompt,
         system_prompt=system_prompt,
         temperature=0.3,
-        max_tokens=600,
+        max_tokens=1024,
     )
 
     parsed = _parse_llm_json_response(llm_response.text)
@@ -1104,7 +1129,7 @@ async def query_stream(
         prompt,
         system_prompt=system_prompt,
         temperature=0.3,
-        max_tokens=600,
+        max_tokens=1024,
     )
 
     parsed = _parse_llm_json_response(llm_response.text)
