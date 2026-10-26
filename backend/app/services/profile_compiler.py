@@ -111,8 +111,11 @@ def _build_compiled_system_prompt(
             "1. First Interaction / Initial Greeting: If any artifact's description indicates it should be displayed at the start of conversation or initial greeting, you MUST include its ID in 'send_artifacts' on the first turn.\n"
             "2. User Intent & Interest Matching: When the user expresses interest in, chooses, or inquires about a specific offering, track, syllabus, brochure, location, or resource matching an artifact's 'When:' description, attach that artifact's ID in 'send_artifacts'.\n"
             "3. Delivery Frequency Control: Check the session DELIVERY HISTORY. Do NOT re-send an artifact that has already been delivered in this session on every turn unless the user explicitly asks for it again or the artifact description specifies recurring delivery.\n"
-            "4. Structured Output: Always return your natural, warm conversational response in 'message' and the list of matching artifact IDs to deliver in 'send_artifacts'."
+            "4. Structured Output: Always return your natural, warm conversational response in 'message' and the list of matching artifact IDs to deliver in 'send_artifacts'.\n"
+            "5. ARTIFACTS ARE THE SOURCE OF TRUTH: When the user's question is answered by an available artifact (e.g., a MAP artifact for location/address, an IMAGE for a brochure/infographic, an INCLUSION TEXT for a link or specific note), attach the artifact and write a SHORT complementary message referencing it (e.g., 'Here is our location 📍' or 'Check out the details below 👇'). Do NOT fabricate, repeat, or paraphrase the artifact's content — the artifact itself will be displayed to the user.\n"
+            "6. NO FABRICATION WITH ARTIFACTS: If the user asks about location/address and a MAP artifact exists, send the MAP — do NOT invent address text. If the user asks about something an IMAGE or INCLUSION TEXT covers, send the artifact. Your 'message' should introduce or frame the artifact, not replace it."
         )
+
 
     # ── Client-Configured Descriptive Trigger Policies ────────────────────
     if descriptive_rules:
