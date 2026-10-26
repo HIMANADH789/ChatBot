@@ -94,8 +94,9 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"persona" | "menu_graph" | "context_images" | "context_maps" | "web_config" | "channels">("persona");
-
+  const [activeTab, setActiveTab] = useState<"persona" | "interfaces" | "artifacts">("persona");
+  const [activeChannel, setActiveChannel] = useState<string>("whatsapp");
+  const [activeArtifactTab, setActiveArtifactTab] = useState<"images" | "maps">("images");
   const [settings, setSettings] = useState<ClientSettings>(DEFAULTS);
   const [setups, setSetups] = useState<any[]>([]);
   const [setupConfigs, setSetupConfigs] = useState<Record<string, any>>({});
@@ -232,72 +233,39 @@ export default function SettingsPage() {
         </span>
       </div>
 
-      {/* Modern Configuration Tabs */}
-      <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-2">
+      {/* Modern Configuration Navigation */}
+      <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-3">
         <button
           onClick={() => setActiveTab("persona")}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition shadow-xs ${
             activeTab === "persona"
-              ? "bg-blue-600 text-white shadow-sm"
-              : "bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200"
+              ? "bg-blue-600 text-white shadow-blue-200"
+              : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-200"
           }`}
         >
-          <span>🤖</span> AI Persona &amp; Behaviour
+          <span>🤖</span> AI Persona &amp; Memory
         </button>
 
         <button
-          onClick={() => setActiveTab("menu_graph")}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
-            activeTab === "menu_graph"
-              ? "bg-blue-600 text-white shadow-sm"
-              : "bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200"
+          onClick={() => setActiveTab("interfaces")}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition shadow-xs ${
+            activeTab === "interfaces"
+              ? "bg-blue-600 text-white shadow-blue-200"
+              : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-200"
           }`}
         >
-          <span>⚡</span> Menu Graph State Machine
+          <span>📱</span> Interface Settings (Channels &amp; Menus)
         </button>
 
         <button
-          onClick={() => setActiveTab("context_images")}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
-            activeTab === "context_images"
-              ? "bg-blue-600 text-white shadow-sm"
-              : "bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200"
+          onClick={() => setActiveTab("artifacts")}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition shadow-xs ${
+            activeTab === "artifacts"
+              ? "bg-blue-600 text-white shadow-blue-200"
+              : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-200"
           }`}
         >
-          <span>🖼️</span> Context Images &amp; Media
-        </button>
-
-        <button
-          onClick={() => setActiveTab("context_maps")}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
-            activeTab === "context_maps"
-              ? "bg-blue-600 text-white shadow-sm"
-              : "bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200"
-          }`}
-        >
-          <span>📍</span> Context Maps &amp; Locations
-        </button>
-
-        <button
-          onClick={() => setActiveTab("web_config")}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
-            activeTab === "web_config"
-              ? "bg-blue-600 text-white shadow-sm"
-              : "bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200"
-          }`}
-        >
-          <span>🌐</span> Web Widget &amp; Integration Code
-        </button>
-
-        <button
-          onClick={() => setActiveTab("channels")}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition ${
-            activeTab === "channels"
-              ? "bg-blue-600 text-white shadow-sm"
-              : "bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200"
-          }`}
-        >
-          <span>💬</span> WhatsApp &amp; Channel Credentials
+          <span>🎨</span> Media &amp; Location Artifacts
         </button>
       </div>
 
@@ -524,29 +492,37 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Tab 2: Menu Graph State Machine */}
-      {activeTab === "menu_graph" && (
-        <MenuGraphBuilder
-          clientId={clientId}
-          nodes={settings.menu_graph_nodes || []}
-          rootNodeId={settings.menu_graph_root_node_id || "MENU_ROOT"}
-          onChange={(updatedNodes, updatedRootId) => {
-            setSettings((s) => ({
-              ...s,
-              menu_graph_nodes: updatedNodes,
-              menu_graph_root_node_id: updatedRootId,
-            }));
-          }}
-          onSaved={() => {
-            setSaved(true);
-            setTimeout(() => setSaved(false), 3000);
-          }}
-        />
-      )}
+      {/* Tab 2: Interface Settings (Channels & Menus) */}
 
-      {/* Tab 3: Context Images & Media Registry */}
-      {activeTab === "context_images" && (
-        <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-6">
+      {/* Tab 3: Media & Location Artifacts */}
+      {activeTab === "artifacts" && (
+        <div className="space-y-6">
+          {/* Sub-artifact selector */}
+          <div className="flex items-center gap-2 bg-gray-100 p-1.5 rounded-2xl w-fit border border-gray-200">
+            <button
+              onClick={() => setActiveArtifactTab("images")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition ${
+                activeArtifactTab === "images"
+                  ? "bg-white text-blue-700 shadow-sm border border-gray-200"
+                  : "text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              <span>🖼️</span> Context Images &amp; Media ({settings.context_images?.length || 0})
+            </button>
+            <button
+              onClick={() => setActiveArtifactTab("maps")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition ${
+                activeArtifactTab === "maps"
+                  ? "bg-white text-emerald-700 shadow-sm border border-gray-200"
+                  : "text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              <span>📍</span> Campus Location Maps ({settings.context_maps?.length || 0})
+            </button>
+          </div>
+
+          {activeArtifactTab === "images" && (
+            <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <div className="flex items-center gap-2">
@@ -724,9 +700,9 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Tab 3.5: Context Maps & Location Artifacts */}
-      {activeTab === "context_maps" && (
-        <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-6">
+      {/* Sub-Tab 2: Context Maps & Location Registry */}
+      {activeArtifactTab === "maps" && (
+            <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <div className="flex items-center gap-2">
@@ -973,167 +949,322 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+    </div>
+  )}
 
-      {/* Tab 4: Web Widget Configuration */}
-      {activeTab === "web_config" && (
-        <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-6">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xl">🌐</span>
-              <h2 className="text-lg font-semibold text-gray-900">Web Widget &amp; Integration Script</h2>
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              Configure embed settings and copy the light JavaScript script tag for your web application.
-            </p>
+      {/* Tab 2: Interface Settings (Channels & Menus) */}
+      {activeTab === "interfaces" && (
+        <div className="space-y-6">
+          {/* Sub-channel pill selector */}
+          <div className="flex flex-wrap items-center gap-2 bg-gray-100 p-1.5 rounded-2xl w-fit border border-gray-200">
+            <button
+              onClick={() => setActiveChannel("whatsapp")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition ${
+                activeChannel === "whatsapp"
+                  ? "bg-white text-emerald-800 shadow-sm border border-gray-200"
+                  : "text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              <span>💬</span> WhatsApp Interface &amp; Menus
+            </button>
+            <button
+              onClick={() => setActiveChannel("widget")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition ${
+                activeChannel === "widget"
+                  ? "bg-white text-blue-800 shadow-sm border border-gray-200"
+                  : "text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              <span>🌐</span> Web Widget Interface &amp; Menus
+            </button>
+            {setups
+              .filter(s => s.channel !== "whatsapp" && s.channel !== "widget" && s.channel !== "web_api" && s.enabled)
+              .map(s => (
+                <button
+                  key={s.channel}
+                  onClick={() => setActiveChannel(s.channel)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition ${
+                    activeChannel === s.channel
+                      ? "bg-white text-gray-900 shadow-sm border border-gray-200"
+                      : "text-gray-600 hover:text-gray-900"
+                  }`}
+                >
+                  <span>{s.emoji}</span> {s.label}
+                </button>
+              ))}
           </div>
 
-          <div className="space-y-4">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Backend API Domain URL
-              </label>
-              <input
-                value={backendUrl}
-                onChange={(e) => setBackendUrl(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono"
-                placeholder="https://your-backend.onrender.com"
-              />
-            </div>
+          {/* WhatsApp Interface Content */}
+          {activeChannel === "whatsapp" && (
+            <div className="space-y-6">
+              {/* WhatsApp Webhook & Credentials Card */}
+              <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-5">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">💬</span>
+                    <h2 className="text-lg font-bold text-gray-900">WhatsApp Cloud API Credentials</h2>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Configure your Meta WhatsApp Business API credentials and webhook integration.
+                  </p>
+                </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Production Script Embed Code
-              </label>
-              <p className="mb-2 text-xs text-gray-400">
-                Paste this script snippet before the closing <code>&lt;/body&gt;</code> tag of your HTML.
-              </p>
-              <div className="relative">
-                <pre className="overflow-x-auto rounded-xl bg-gray-900 p-4 text-xs font-mono text-emerald-400">
-                  {widgetCode}
-                </pre>
+                <div className="space-y-4">
+                  {/* WhatsApp Webhook URL */}
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-bold text-emerald-900 uppercase tracking-wider">Webhook Endpoint URL</h3>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(`${backendUrl}/api/adapters/whatsapp/webhook`);
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        }}
+                        className="text-[11px] font-semibold text-emerald-700 hover:underline cursor-pointer"
+                      >
+                        {copied ? "Copied!" : "📋 Copy Webhook URL"}
+                      </button>
+                    </div>
+                    <p className="font-mono text-xs text-emerald-800 bg-white p-2 rounded-lg border border-emerald-200 select-all">
+                      {`${backendUrl}/api/adapters/whatsapp/webhook`}
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Phone Number ID</label>
+                    <input
+                      type="text"
+                      value={setupConfigs["whatsapp"]?.phone_number_id || ""}
+                      onChange={(e) => setSetupConfigs(prev => ({
+                        ...prev,
+                        whatsapp: { ...(prev.whatsapp || {}), phone_number_id: e.target.value }
+                      }))}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:border-emerald-500 focus:outline-none"
+                      placeholder="e.g. 109827364512398"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Meta Access Token</label>
+                    <input
+                      type="password"
+                      value={setupConfigs["whatsapp"]?.access_token || ""}
+                      onChange={(e) => setSetupConfigs(prev => ({
+                        ...prev,
+                        whatsapp: { ...(prev.whatsapp || {}), access_token: e.target.value }
+                      }))}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:border-emerald-500 focus:outline-none"
+                      placeholder={setupConfigs["whatsapp"]?.access_token === "••••••••••••••••" ? "••••••••••••••••" : "EAAG..."}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Webhook Verify Token</label>
+                    <input
+                      type="password"
+                      value={setupConfigs["whatsapp"]?.verify_token || ""}
+                      onChange={(e) => setSetupConfigs(prev => ({
+                        ...prev,
+                        whatsapp: { ...(prev.whatsapp || {}), verify_token: e.target.value }
+                      }))}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:border-emerald-500 focus:outline-none"
+                      placeholder={setupConfigs["whatsapp"]?.verify_token === "••••••••••••••••" ? "••••••••••••••••" : "custom_verify_token"}
+                    />
+                  </div>
+
+                  <button
+                    onClick={() => saveIntegrationConfig("whatsapp")}
+                    disabled={savingSetups["whatsapp"]}
+                    className="rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50 transition shadow-xs flex items-center gap-2"
+                  >
+                    <span>💾</span>
+                    {savingSetups["whatsapp"] ? "Saving..." : "Save WhatsApp Credentials"}
+                  </button>
+                </div>
+              </div>
+
+              {/* WhatsApp Interactive Menu Options & State Machine */}
+              <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-4">
+                <div className="border-b border-gray-100 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">⚡</span>
+                      <h2 className="text-lg font-bold text-gray-900">WhatsApp Interactive Menus &amp; Option Buttons</h2>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Configure the interactive button options, program tracks, and conversation navigation presented on WhatsApp.
+                    </p>
+                  </div>
+                  <span className="text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1 rounded-full w-fit">
+                    WhatsApp State Machine
+                  </span>
+                </div>
+
+                <MenuGraphBuilder
+                  clientId={clientId}
+                  nodes={setupConfigs["whatsapp"]?.menu_graph_nodes || settings.menu_graph_nodes || []}
+                  rootNodeId={setupConfigs["whatsapp"]?.menu_graph_root_node_id || settings.menu_graph_root_node_id || "MENU_ROOT"}
+                  onChange={(updatedNodes, updatedRootId) => {
+                    setSettings((s) => ({
+                      ...s,
+                      menu_graph_nodes: updatedNodes,
+                      menu_graph_root_node_id: updatedRootId,
+                    }));
+                    setSetupConfigs(prev => ({
+                      ...prev,
+                      whatsapp: {
+                        ...(prev.whatsapp || {}),
+                        menu_graph_nodes: updatedNodes,
+                        menu_graph_root_node_id: updatedRootId,
+                      }
+                    }));
+                  }}
+                  onSaved={() => {
+                    setSaved(true);
+                    setTimeout(() => setSaved(false), 3000);
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Web Widget Interface Content */}
+          {activeChannel === "widget" && (
+            <div className="space-y-6">
+              {/* Web Widget Embed Code Card */}
+              <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-5">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">🌐</span>
+                    <h2 className="text-lg font-bold text-gray-900">Web Widget Integration Code</h2>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Embed the AI Front Desk assistant directly into your website or student portal.
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">
+                      Backend API Domain URL
+                    </label>
+                    <input
+                      value={backendUrl}
+                      onChange={(e) => setBackendUrl(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:border-blue-500 focus:outline-none"
+                      placeholder="https://your-backend.onrender.com"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">
+                      HTML Script Embed Code
+                    </label>
+                    <p className="mb-2 text-xs text-gray-400">
+                      Paste this script snippet before the closing <code>&lt;/body&gt;</code> tag of your website.
+                    </p>
+                    <div className="relative">
+                      <pre className="overflow-x-auto rounded-xl bg-gray-900 p-4 text-xs font-mono text-emerald-400">
+                        {widgetCode}
+                      </pre>
+                      <button
+                        onClick={copyCode}
+                        className="absolute right-3 top-3 rounded-lg bg-gray-800 border border-gray-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-700 transition"
+                      >
+                        {copied ? "Copied!" : "📋 Copy Code"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4 space-y-2">
+                    <h3 className="text-xs font-bold text-blue-900 uppercase tracking-wider">Web Application Features:</h3>
+                    <ul className="list-disc pl-5 text-xs text-blue-800 space-y-1">
+                      <li>Option buttons rendered as clean interactive button chips.</li>
+                      <li>Smooth typing animation and structured markdown tables.</li>
+                      <li>Direct origin locking security to protect your quota.</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {/* Web Widget Interactive Menu Options & State Machine */}
+              <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-4">
+                <div className="border-b border-gray-100 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">⚡</span>
+                      <h2 className="text-lg font-bold text-gray-900">Web Widget Interactive Menus &amp; Button Chips</h2>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Configure the quick-choice button chips and navigation flows shown to website visitors.
+                    </p>
+                  </div>
+                  <span className="text-xs font-semibold bg-blue-50 text-blue-800 border border-blue-200 px-3 py-1 rounded-full w-fit">
+                    Widget State Machine
+                  </span>
+                </div>
+
+                <MenuGraphBuilder
+                  clientId={clientId}
+                  nodes={setupConfigs["widget"]?.menu_graph_nodes || settings.menu_graph_nodes || []}
+                  rootNodeId={setupConfigs["widget"]?.menu_graph_root_node_id || settings.menu_graph_root_node_id || "MENU_ROOT"}
+                  onChange={(updatedNodes, updatedRootId) => {
+                    setSettings((s) => ({
+                      ...s,
+                      menu_graph_nodes: updatedNodes,
+                      menu_graph_root_node_id: updatedRootId,
+                    }));
+                    setSetupConfigs(prev => ({
+                      ...prev,
+                      widget: {
+                        ...(prev.widget || {}),
+                        menu_graph_nodes: updatedNodes,
+                        menu_graph_root_node_id: updatedRootId,
+                      }
+                    }));
+                  }}
+                  onSaved={() => {
+                    setSaved(true);
+                    setTimeout(() => setSaved(false), 3000);
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Other Third-Party Channels */}
+          {activeChannel !== "whatsapp" && activeChannel !== "widget" && setupConfigs[activeChannel] && (
+            <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-6">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🔌</span>
+                <h3 className="text-lg font-bold text-gray-900">{activeChannel.toUpperCase()} Configuration</h3>
+              </div>
+              <div className="space-y-4">
+                {Object.keys(setupConfigs[activeChannel]).map(key => {
+                  if (["enabled", "rate_limit_rpm", "rate_limit_rpd", "max_queries_per_session", "menu_graph_nodes", "menu_graph_root_node_id"].includes(key)) return null;
+                  return (
+                    <div key={key}>
+                      <label className="mb-1 block text-sm font-medium text-gray-700">{key.replace(/_/g, ' ').toUpperCase()}</label>
+                      <input
+                        type="text"
+                        value={setupConfigs[activeChannel][key] || ""}
+                        onChange={(e) => setSetupConfigs(prev => ({
+                          ...prev,
+                          [activeChannel]: { ...prev[activeChannel], [key]: e.target.value }
+                        }))}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                      />
+                    </div>
+                  );
+                })}
                 <button
-                  onClick={copyCode}
-                  className="absolute right-3 top-3 rounded-md bg-gray-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-600 transition"
+                  onClick={() => saveIntegrationConfig(activeChannel)}
+                  disabled={savingSetups[activeChannel]}
+                  className="rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50 transition shadow-xs"
                 >
-                  {copied ? "Copied!" : "📋 Copy Code"}
+                  {savingSetups[activeChannel] ? "Saving..." : `Save ${activeChannel.toUpperCase()} Settings`}
                 </button>
               </div>
             </div>
-
-            <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4 space-y-2">
-              <h3 className="text-xs font-bold text-blue-900 uppercase tracking-wider">Web Application Features:</h3>
-              <ul className="list-disc pl-5 text-xs text-blue-800 space-y-1">
-                <li>Option buttons rendered as clean UI button groups / chips.</li>
-                <li>Bypasses WhatsApp media image attachments for lightweight payload delivery.</li>
-                <li>Allows unconstrained long-form text and markdown.</li>
-                <li>Socket sequence deduplication for client web sessions.</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tab 4: WhatsApp & Channels Credentials */}
-      {activeTab === "channels" && (
-        <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-200 space-y-6">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xl">💬</span>
-              <h2 className="text-lg font-semibold text-gray-900">WhatsApp &amp; Channel Integrations</h2>
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              Configure credentials for WhatsApp Cloud API and active external messaging channels.
-            </p>
-          </div>
-
-          <div className="space-y-6">
-            {/* WhatsApp Webhook Endpoint Info */}
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-2">
-              <h3 className="text-xs font-bold text-emerald-900 uppercase tracking-wider">WhatsApp Cloud API Webhook URL:</h3>
-              <p className="font-mono text-xs text-emerald-800 bg-white p-2 rounded border border-emerald-200 select-all">
-                {`${backendUrl}/api/adapters/whatsapp/webhook`}
-              </p>
-            </div>
-
-            {setups.filter(s => s.enabled && s.channel !== "widget" && s.channel !== "web_api").length > 0 ? (
-              setups.filter(s => s.enabled && s.channel !== "widget" && s.channel !== "web_api").map(setup => (
-                <div key={setup.channel} className="rounded-xl border border-gray-200 p-5 space-y-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xl">{setup.emoji}</span>
-                    <h3 className="font-semibold text-gray-800">{setup.label} Configuration</h3>
-                  </div>
-
-                  {setupConfigs[setup.channel] ? (
-                    <div className="space-y-4">
-                      {setup.channel === "whatsapp" && (
-                        <>
-                          <div>
-                            <label className="mb-1 block text-sm font-medium text-gray-700">Phone Number ID</label>
-                            <input
-                              type="text"
-                              value={setupConfigs[setup.channel].phone_number_id || ""}
-                              onChange={(e) => setSetupConfigs(prev => ({ ...prev, [setup.channel]: { ...prev[setup.channel], phone_number_id: e.target.value } }))}
-                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono"
-                              placeholder="e.g. 109827364512398"
-                            />
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-sm font-medium text-gray-700">Meta Access Token</label>
-                            <input
-                              type="password"
-                              value={setupConfigs[setup.channel].access_token || ""}
-                              onChange={(e) => setSetupConfigs(prev => ({ ...prev, [setup.channel]: { ...prev[setup.channel], access_token: e.target.value } }))}
-                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono"
-                              placeholder={setupConfigs[setup.channel].access_token === "••••••••••••••••" ? "••••••••••••••••" : "EAAG..."}
-                            />
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-sm font-medium text-gray-700">Webhook Verify Token</label>
-                            <input
-                              type="password"
-                              value={setupConfigs[setup.channel].verify_token || ""}
-                              onChange={(e) => setSetupConfigs(prev => ({ ...prev, [setup.channel]: { ...prev[setup.channel], verify_token: e.target.value } }))}
-                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono"
-                              placeholder={setupConfigs[setup.channel].verify_token === "••••••••••••••••" ? "••••••••••••••••" : "custom_verify_token"}
-                            />
-                          </div>
-                        </>
-                      )}
-
-                      {setup.channel !== "whatsapp" && Object.keys(setupConfigs[setup.channel]).map(key => {
-                        if (["enabled", "rate_limit_rpm", "rate_limit_rpd", "max_queries_per_session"].includes(key)) return null;
-                        return (
-                          <div key={key}>
-                            <label className="mb-1 block text-sm font-medium text-gray-700">{key.replace(/_/g, ' ').toUpperCase()}</label>
-                            <input
-                              type="text"
-                              value={setupConfigs[setup.channel][key] || ""}
-                              onChange={(e) => setSetupConfigs(prev => ({ ...prev, [setup.channel]: { ...prev[setup.channel], [key]: e.target.value } }))}
-                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                            />
-                          </div>
-                        );
-                      })}
-
-                      <button
-                        onClick={() => saveIntegrationConfig(setup.channel)}
-                        disabled={savingSetups[setup.channel]}
-                        className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                      >
-                        {savingSetups[setup.channel] ? "Saving..." : `Save ${setup.label} Configuration`}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="animate-pulse flex h-12 w-full bg-gray-100 rounded-lg"></div>
-                  )}
-                </div>
-              ))
-            ) : (
-              <div className="rounded-xl border border-dashed border-gray-300 p-6 text-center text-xs text-gray-500">
-                No third-party channels currently active. Enable channels under Institution Setups to configure credentials.
-              </div>
-            )}
-          </div>
+          )}
         </div>
       )}
     </div>

@@ -149,7 +149,7 @@ def _build_compiled_system_prompt(
         '  "context_updates": {"user_name": "...", "interested_course": "..."}\n'
         '}\n\n'
         'Rules:\n'
-        '- "message": REQUIRED. Your natural, warm, engaging response.\n'
+        '- "message": REQUIRED. Your natural, warm, point-wise response with crisp bullet points (- item), bold highlights, tasteful emojis, and an interactive closing question. Do NOT write solid paragraph walls.\n'
         '- "send_artifacts": List of artifact IDs to attach. Use [] if none.\n'
         '- "context_updates": Any new user info extracted from the message (name, qualification, course interest, experience level). Use {} if none.\n'
         '- Output ONLY the JSON object. No preamble, no thinking tags, no explanation.'

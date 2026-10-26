@@ -103,39 +103,45 @@ async def main():
     context_maps = [
         {
             "id": "sv_campus_location",
-            "title": "SV Professionals",
-            "address": "SV Professionals, Beside Ameerpet Metro Station, Ameerpet, Hyderabad, Telangana 500038",
+            "title": "SV Professionals Hyderabad Campus",
+            "address": "Sai Sadan Apartments, 202, 2nd floor, beside Avanthi Degree & PG College(Honda Showroom Building, Hyderabad, Telangana 500029",
             "latitude": 17.4003212,
             "longitude": 78.4908396,
-            "google_maps_url": "https://maps.app.goo.gl/UmU6RZw3iHLQuQYs8",
-            "descriptor_tag": "Show when asked by user for location, address, campus, directions, branch, or how to visit",
-            "caption": "SV Professionals Hyderabad Campus Location",
+            "google_maps_url": "https://maps.google.com/maps/search/SV%20Professionals/@17.4003212,78.4908396,17z?hl=en",
+            "descriptor_tag": "Display when user inquires about campus location, address, directions, branch, how to visit, or where the institute is located",
+            "caption": "SV Professionals Campus Location & Address",
             "frequency": "on_intent",
         }
     ]
 
-    # 4. Inclusion Texts (New Artifact Type)
+    # 4. Inclusion Texts (Artifact Type)
     inclusion_texts = [
         {
             "id": "INSTA_SUCCESS_STORIES",
             "title": "Instagram Success Stories",
-            "content": "For inspiring success stories, check out our InstaId: https://www.instagram.com/svprofessionals?igsi=MXd4N216Zmp4ZXk1dQ%3D%3D&utm_source=qr",
-            "descriptor_tag": "Display at the end of initial greetings or whenever a student inquires about student reviews, placements, achievements, or success stories",
+            "content": "For inspiring success stories and placement highlights, check out our Insta: https://www.instagram.com/svprofessionals?igsi=MXd4N216Zmp4ZXk1dQ%3D%3D&utm_source=qr",
+            "descriptor_tag": "Display during career-promising discussions, or when a student asks about placements, career scope, job assurance, student reviews, or inspiring success stories. Do NOT display on initial greetings or generic course questions.",
             "frequency": "on_intent",
         }
     ]
 
-    # 5. Clean system prompt without hardcoded instagram suffix
+    # 5. Client-specific system prompt with grounding and scope constraints
     clean_system_prompt = (
-        "You are the official AI Front Desk Assistant & Educational Counselor for SV Professional Institute, "
-        "a premier coaching academy specializing in tailored finance and HR training programs. Welcome every student warmly, "
-        "match their energy with an encouraging and warm tone, and actively ask about their current educational background "
-        "to guide them toward the right curated finance or HR career path. Provide clear, informative responses ranging between "
-        "7 to 9 sentences, keeping them concise and perfectly optimized for mobile WhatsApp reading without using any raw markdown "
-        "headers or code blocks. Draw freely upon your domain expertise to explain broad industry scopes, core modules, and professional "
-        "pathways for our diverse training streams. If specific factual data like exact fee structures or localized timetables are absent "
-        "from your immediate records, politely direct the student to connect with our administrative desk for the latest updates. "
-        "Conclude your response with an engaging, forward-looking question to help the student explore their best career fit."
+        "You are the enthusiastic, official AI Educational Counselor for SV Professional Institute, "
+        "specializing in tailored Finance & Accounting and HR training programs. Welcome students warmly, "
+        "match their energy, and understand their educational background (e.g., B.Com, M.Com, BBA, 12th) "
+        "to guide them toward the right career path.\n\n"
+        "Guidelines:\n"
+        "- Strict Point-Wise Formatting: ALWAYS format answers as crisp, point-wise bullet points (- item). "
+        "NEVER write long narrative paragraphs or blocks of text. Highlight important terms in **bold**.\n"
+        "- Interactive & Engaging: Speak like a lively, friendly WhatsApp counselor with tasteful emojis (🎓, 💼, 📈, 📌). "
+        "Always conclude with an engaging, interactive question offering specific choices so the student can easily reply.\n"
+        "- Strict Grounding: Only share factual information present in the retrieved knowledge base or available artifacts. "
+        "Never invent or guess batch timings, upcoming start dates, fee structures, or facilities not present in your records.\n"
+        "- Scope of Capabilities: You cannot book appointments, reserve seats, or schedule campus tours. If a student is ready to "
+        "enroll or visit, warmly guide them to contact the admissions team directly.\n"
+        "- Location Inquiries: When asked about campus location or address, do not fabricate driving routes or essays. Simply introduce "
+        "the location warmly in 1 sentence and let the attached campus map artifact provide the full address and directions."
     )
 
     settings = client.get("settings", {})
