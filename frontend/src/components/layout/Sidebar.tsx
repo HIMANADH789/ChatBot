@@ -8,8 +8,9 @@ import { useAuth } from "@/lib/auth";
 
 const adminNavItems = [
   { href: "/dashboard", label: "Overview", icon: "📊" },
+  { href: "/dashboard/conversations", label: "Conversations", icon: "💬" },
   { href: "/dashboard/documents", label: "Documents", icon: "📄" },
-  { href: "/dashboard/chat-test", label: "Test Chat", icon: "💬" },
+  { href: "/dashboard/chat-test", label: "Test Chat", icon: "🧪" },
   { href: "/dashboard/logs", label: "Request Logs", icon: "📋" },
   { href: "/dashboard/analytics", label: "Analytics", icon: "📈" },
   { href: "/dashboard/settings", label: "Settings", icon: "⚙️" },
@@ -18,6 +19,7 @@ const adminNavItems = [
 const superAdminNavItems = [
   { href: "/dashboard", label: "Overview", icon: "📊" },
   { href: "/dashboard/super-admin/institutions", label: "Manage Institutions", icon: "🏫" },
+  { href: "/dashboard/conversations", label: "Conversations", icon: "💬" },
   { href: "/dashboard/logs", label: "Request Logs", icon: "📋" },
   { href: "/dashboard/super-admin", label: "Usage & Analytics", icon: "📈" },
   { href: "/dashboard/super-admin/settings", label: "Settings", icon: "⚙️" },

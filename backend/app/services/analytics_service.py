@@ -326,3 +326,235 @@ async def get_webhook_logs(
         "page": page,
         "page_size": page_size,
     }
+
+
+async def get_segregated_user_conversations(
+    client_id: str | None = None,
+    channel: str | None = None,
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = 25,
+) -> dict:
+    """
+    Aggregate request/webhook logs grouped by unique user (sender_id).
+    Provides user details, message count, latest message snippet, and last activity time.
+    """
+    db = get_db()
+    match: dict = {
+        "sender_id": {"$exists": True, "$ne": None, "$nin": ["", "unknown", "None"]}
+    }
+    if client_id and client_id != "all":
+        match["client_id"] = client_id
+
+    if channel and channel != "all":
+        match["channel"] = channel
+
+    if search and search.strip():
+        s = search.strip()
+        regex = {"$regex": s, "$options": "i"}
+        match["$or"] = [
+            {"sender_id": regex},
+            {"sender_name": regex},
+            {"message_in": regex},
+            {"response_out": regex},
+        ]
+
+    pipeline = [
+        {"$match": match},
+        {"$sort": {"timestamp": -1}},
+        {
+            "$group": {
+                "_id": "$sender_id",
+                "sender_id": {"$first": "$sender_id"},
+                "sender_name": {"$max": "$sender_name"},
+                "channel": {"$first": "$channel"},
+                "client_id": {"$first": "$client_id"},
+                "last_timestamp": {"$max": "$timestamp"},
+                "last_message": {
+                    "$first": {
+                        "$cond": [
+                            {"$ne": ["$message_in", None]},
+                            "$message_in",
+                            "$response_out"
+                        ]
+                    }
+                },
+                "total_messages": {
+                    "$sum": {
+                        "$cond": [
+                            {"$or": [
+                                {"$ne": ["$message_in", None]},
+                                {"$ne": ["$response_out", None]}
+                            ]},
+                            1,
+                            0
+                        ]
+                    }
+                },
+                "total_events": {"$sum": 1},
+                "has_errors": {
+                    "$sum": {
+                        "$cond": [
+                            {"$or": [
+                                {"$eq": ["$status", "error"]},
+                                {"$regexMatch": {"input": {"$ifNull": ["$status", ""]}, "regex": "error|fail"}},
+                                {"$ne": ["$error", None]}
+                            ]},
+                            1,
+                            0
+                        ]
+                    }
+                }
+            }
+        },
+        {"$sort": {"last_timestamp": -1}},
+    ]
+
+    count_pipeline = pipeline + [{"$count": "total"}]
+    count_res = await db["webhook_logs"].aggregate(count_pipeline).to_list(1)
+    total = count_res[0]["total"] if count_res else 0
+
+    skip = (page - 1) * page_size
+    data_pipeline = pipeline + [{"$skip": skip}, {"$limit": page_size}]
+    rows = await db["webhook_logs"].aggregate(data_pipeline).to_list(page_size)
+
+    users = []
+    for r in rows:
+        ts = r.get("last_timestamp")
+        if ts and hasattr(ts, "isoformat"):
+            ts = ts.isoformat()
+        users.append({
+            "sender_id": str(r["sender_id"]),
+            "sender_name": r.get("sender_name") or "Visitor",
+            "channel": r.get("channel") or "whatsapp",
+            "client_id": r.get("client_id"),
+            "last_message": r.get("last_message") or "(Activity logged)",
+            "last_timestamp": str(ts) if ts else None,
+            "total_messages": r.get("total_messages", 0),
+            "total_events": r.get("total_events", 0),
+            "has_errors": bool(r.get("has_errors", 0)),
+        })
+
+    return {
+        "users": users,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+async def get_user_chat_thread(
+    sender_id: str,
+    client_id: str | None = None,
+    channel: str | None = None,
+) -> dict:
+    """
+    Reconstruct chronological chat messages and media for a specific sender_id
+    into a WhatsApp-style conversation structure.
+    """
+    db = get_db()
+    match: dict = {"sender_id": sender_id}
+    if client_id and client_id != "all":
+        match["client_id"] = client_id
+    if channel and channel != "all":
+        match["channel"] = channel
+
+    cursor = db["webhook_logs"].find(match).sort("timestamp", 1).limit(500)
+    raw_logs = await cursor.to_list(500)
+
+    user_info = {
+        "sender_id": sender_id,
+        "sender_name": "Visitor",
+        "channel": channel or "whatsapp",
+        "client_id": client_id,
+        "total_events": len(raw_logs),
+    }
+
+    messages = []
+    # Track receipt states
+    latest_receipt_status = "sent"
+
+    for log in raw_logs:
+        st = log.get("status") or ""
+        ts = log.get("timestamp")
+        ts_iso = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+
+        # Update contact name if found
+        if log.get("sender_name"):
+            user_info["sender_name"] = log["sender_name"]
+        elif log.get("metadata", {}).get("contact_name"):
+            user_info["sender_name"] = log["metadata"]["contact_name"]
+
+        if log.get("channel"):
+            user_info["channel"] = log["channel"]
+        if log.get("client_id"):
+            user_info["client_id"] = log["client_id"]
+
+        # Track receipts
+        if st.startswith("receipt_"):
+            sub = st.replace("receipt_", "")
+            if sub in ("read", "delivered", "sent"):
+                latest_receipt_status = sub
+                # Update status of last assistant message
+                for m in reversed(messages):
+                    if m["role"] == "assistant":
+                        if sub == "read" or (sub == "delivered" and m.get("status") != "read"):
+                            m["status"] = sub
+                        break
+            continue
+
+        # 1. User message turn
+        msg_in = log.get("message_in")
+        if msg_in:
+            # Check if this exact user message was already added recently
+            if not any(m["role"] == "user" and m["text"] == msg_in for m in messages[-2:]):
+                messages.append({
+                    "id": str(log.get("_id", "")) + "_in",
+                    "role": "user",
+                    "text": msg_in,
+                    "timestamp": ts_iso,
+                    "status": "received",
+                })
+
+        # 2. Assistant response turn
+        resp_out = log.get("response_out")
+        err = log.get("error")
+        is_error = "error" in st or bool(err)
+
+        if resp_out or is_error:
+            # Parse media if attached to outgoing payload
+            media = None
+            out_p = log.get("outgoing_payload") or {}
+            if isinstance(out_p, dict):
+                p_type = out_p.get("type")
+                if p_type == "image":
+                    img_data = out_p.get("image", {})
+                    media = {
+                        "type": "image",
+                        "url": img_data.get("link") or img_data.get("url"),
+                        "caption": img_data.get("caption", ""),
+                    }
+                elif p_type == "document":
+                    doc_data = out_p.get("document", {})
+                    media = {
+                        "type": "document",
+                        "url": doc_data.get("link") or doc_data.get("url"),
+                        "caption": doc_data.get("caption") or doc_data.get("filename", ""),
+                    }
+
+            messages.append({
+                "id": str(log.get("_id", "")) + "_out",
+                "role": "assistant",
+                "text": resp_out or (f"⚠️ System Error: {err}" if err else "⚠️ Request failed"),
+                "timestamp": ts_iso,
+                "status": "error" if is_error else latest_receipt_status,
+                "error": err,
+                "media": media,
+                "latency_ms": log.get("duration_ms") or log.get("latency_ms"),
+            })
+
+    return {
+        "user": user_info,
+        "messages": messages,
+    }
+

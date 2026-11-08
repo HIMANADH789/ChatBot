@@ -78,6 +78,28 @@ export const api = {
     );
   },
 
+  getUserConversations: (params: { clientId?: string; channel?: string; search?: string; page?: number; pageSize?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.clientId) q.append("client_id", params.clientId);
+    if (params.channel) q.append("channel", params.channel);
+    if (params.search) q.append("search", params.search);
+    if (params.page) q.append("page", String(params.page));
+    if (params.pageSize) q.append("page_size", String(params.pageSize));
+    return request<{ users: import("@/types").UserConversationSummary[]; total: number; page: number; page_size: number }>(
+      `/analytics/user-conversations?${q.toString()}`
+    );
+  },
+
+  getUserChatThread: (senderId: string, params: { clientId?: string; channel?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.clientId) q.append("client_id", params.clientId);
+    if (params.channel) q.append("channel", params.channel);
+    const query = q.toString() ? `?${q.toString()}` : "";
+    return request<import("@/types").UserChatThread>(
+      `/analytics/user-conversations/${encodeURIComponent(senderId)}${query}`
+    );
+  },
+
   // ── Clients ──────────────────────────────────────────────────────────────────
   getMyProfile: () =>
     request<{ email: string; client_id: string; role: string; client: import("@/types").ClientRecord | null }>("/clients/me/profile"),

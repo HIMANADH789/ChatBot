@@ -71,9 +71,12 @@ async def whatsapp_verify(
     if not client:
         raise HTTPException(404, "Institution not found")
         
-    expected = client.get("settings", {}).get("whatsapp_config", {}).get("verify_token", "")
-    if not expected:
-        expected = "SynapDeskSecretToken123"
+    s = client.get("settings", {})
+    expected = (
+        s.get("setups", {}).get("whatsapp", {}).get("verify_token")
+        or s.get("whatsapp_config", {}).get("verify_token")
+        or "SynapDeskSecretToken123"
+    )
     
     if hub_mode == "subscribe" and hub_verify_token == expected and hub_challenge:
         return hub_challenge
@@ -244,8 +247,14 @@ async def whatsapp_debug(client_id: str):
         from app.config import settings as app_settings
         checks["llm_provider"] = app_settings.LLM_PROVIDER
         checks["groq_model"] = app_settings.GROQ_MODEL if app_settings.LLM_PROVIDER == "groq" else "N/A"
+        checks["openrouter_model"] = (
+            app_settings.OPENROUTER_MODEL
+            if app_settings.LLM_PROVIDER in ("openrouter", "open_router")
+            else "N/A"
+        )
         checks["gemini_api_key_set"] = bool(app_settings.GEMINI_API_KEY)
         checks["groq_api_key_set"] = bool(app_settings.GROQ_API_KEY)
+        checks["openrouter_api_key_set"] = bool(app_settings.OPENROUTER_API_KEY)
     except Exception as e:
         checks["settings_error"] = str(e)
 

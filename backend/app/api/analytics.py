@@ -56,6 +56,56 @@ async def get_webhook_logs(
     )
 
 
+@router.get("/user-conversations")
+async def get_user_conversations(
+    client_id: str | None = None,
+    channel: str | None = None,
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = 25,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Retrieve list of segregated user conversations with interaction summary.
+    """
+    is_super_admin = user.get("role") == "super_admin"
+    if is_super_admin:
+        target_client_id = client_id if (client_id and client_id != "all") else None
+    else:
+        target_client_id = user["client_id"]
+
+    return await analytics_service.get_segregated_user_conversations(
+        client_id=target_client_id,
+        channel=channel,
+        search=search,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/user-conversations/{sender_id:path}")
+async def get_user_chat_thread(
+    sender_id: str,
+    client_id: str | None = None,
+    channel: str | None = None,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Retrieve full WhatsApp-style chat thread for a specific user / phone number.
+    """
+    is_super_admin = user.get("role") == "super_admin"
+    if is_super_admin:
+        target_client_id = client_id if (client_id and client_id != "all") else None
+    else:
+        target_client_id = user["client_id"]
+
+    return await analytics_service.get_user_chat_thread(
+        sender_id=sender_id,
+        client_id=target_client_id,
+        channel=channel,
+    )
+
+
 # ── Super-admin endpoints ──────────────────────────────────────────────────────
 
 @router.get("/super-admin/overview")

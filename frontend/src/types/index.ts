@@ -65,6 +65,44 @@ export interface WebhookLog {
   traceback?: string;
 }
 
+export interface UserConversationSummary {
+  sender_id: string;
+  sender_name: string;
+  channel: string;
+  client_id?: string;
+  last_message: string;
+  last_timestamp: string;
+  total_messages: number;
+  total_events: number;
+  has_errors: boolean;
+}
+
+export interface ChatThreadMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  text: string;
+  timestamp: string;
+  status: "received" | "sent" | "delivered" | "read" | "error" | string;
+  error?: string;
+  media?: {
+    type: "image" | "document" | string;
+    url?: string;
+    caption?: string;
+  };
+  latency_ms?: number;
+}
+
+export interface UserChatThread {
+  user: {
+    sender_id: string;
+    sender_name: string;
+    channel: string;
+    client_id?: string;
+    total_events: number;
+  };
+  messages: ChatThreadMessage[];
+}
+
 export interface User {
   email: string;
   client_id: string;

@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "groq/compound"
 
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_MODEL: str = "meta-llama/llama-3.3-70b-instruct"
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    OPENROUTER_SITE_URL: str = ""
+    OPENROUTER_APP_NAME: str = "ChatX"
+
     # Optional provider; currently unused if OPENAI_API_KEY is not set.
     OPENAI_API_KEY: str = ""
 

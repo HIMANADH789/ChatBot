@@ -16,3 +16,5 @@ scratch/
 chroma_data/
 
 app/providers/embeddings/model_onnx/
+
+chatbot-secrets.json
