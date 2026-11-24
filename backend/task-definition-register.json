@@ -1,4 +1,4 @@
-﻿{
+{
     "containerDefinitions":  [
                                  {
                                      "name":  "chatbot-backend",
@@ -35,7 +35,7 @@
                                                          },
                                                          {
                                                              "name":  "GROQ_MODEL",
-                                                             "value":  "groq/compound"
+                                                             "value":  "qwen/qwen3.8-27b"
                                                          },
                                                          {
                                                              "name":  "RERANK_ENABLED",

@@ -1,4 +1,4 @@
-﻿{
+{
     "taskDefinitionArn": "arn:aws:ecs:ap-south-1:669394142262:task-definition/chatbot-backend:1",
     "containerDefinitions": [
         {
@@ -36,7 +36,7 @@
                 },
                 {
                     "name": "GROQ_MODEL",
-                    "value": "groq/compound"
+                    "value": "qwen/qwen3.8-27b"
                 },
                 {
                     "name": "RERANK_ENABLED",

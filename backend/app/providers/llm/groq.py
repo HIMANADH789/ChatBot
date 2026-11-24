@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from typing import AsyncIterator, Optional
 
 import httpx
@@ -10,7 +11,27 @@ from app.providers.base import LLMProvider, LLMResponse
 
 logger = logging.getLogger("GroqProvider")
 
-FALLBACK_MODELS = ["groq/compound", "groq/compound-mini", "openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
+# ── Ordered by quality & throughput ─────────────────────────────────────────────
+# This list is refreshed automatically at startup via /v1/models if possible.
+# Keep it up-to-date as a static fallback whenever Groq deprecates a model.
+PREFERRED_MODELS = [
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "allam-2-7b",
+]
+
+# Models that have been retired — skip them immediately if configured.
+DEPRECATED_MODELS = {
+    "llama-3.3-70b-versatile",
+    "groq/compound",
+    "groq/compound-mini",
+    "llama3-70b-8192",
+    "llama3-8b-8192",
+    "mixtral-8x7b-32768",
+    "gemma2-9b-it",
+    "qwen/qwen3.6-27b",
+}
 
 
 def _strip_thinking_tags(text: str) -> str:
@@ -22,15 +43,25 @@ def _strip_thinking_tags(text: str) -> str:
 
 
 class GroqProvider(LLMProvider):
+    _available_models_cache: list[str] | None = None
+    _cache_ts: float = 0
+
     def __init__(
         self,
         api_key: str,
-        model: str = "groq/compound",
+        model: str = "qwen/qwen3.8-27b",
     ):
         self._api_key = api_key
-        # Use groq/compound as preferred high-throughput model (70k TPM vs 8k TPM for older Qwen)
-        self._model = model if model and model != "qwen/qwen3.6-27b" else "groq/compound"
         self._base_url = "https://api.groq.com/openai/v1"
+        # If the configured model is known-deprecated, swap to best available
+        if model in DEPRECATED_MODELS or not model:
+            logger.warning(
+                "Configured Groq model '%s' is deprecated/empty — switching to '%s'",
+                model, PREFERRED_MODELS[0],
+            )
+            self._model = PREFERRED_MODELS[0]
+        else:
+            self._model = model
 
     def _headers(self) -> dict:
         return {
@@ -45,6 +76,48 @@ class GroqProvider(LLMProvider):
         messages.append({"role": "user", "content": prompt})
         return messages
 
+    async def _get_available_chat_models(self) -> list[str]:
+        """
+        Fetch the live list of chat-capable models from Groq's /v1/models endpoint.
+        Cached for 1 hour to avoid hitting the API on every request.
+        """
+        now = time.time()
+        if self._available_models_cache and (now - self._cache_ts) < 3600:
+            return self._available_models_cache
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    f"{self._base_url}/models",
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    all_ids = [m["id"] for m in data.get("data", [])]
+                    # Filter to chat-capable models (exclude whisper, guard, orpheus)
+                    skip_prefixes = ("whisper", "meta-llama/llama-prompt-guard", "canopylabs/orpheus")
+                    chat_models = [mid for mid in all_ids if not any(mid.startswith(p) or mid.startswith(p) for p in skip_prefixes)]
+                    if chat_models:
+                        GroqProvider._available_models_cache = chat_models
+                        GroqProvider._cache_ts = now
+                        logger.info("Groq live models refreshed: %s", chat_models)
+                        return chat_models
+        except Exception as e:
+            logger.debug("Could not fetch Groq models list: %s", e)
+
+        return PREFERRED_MODELS
+
+    def _build_fallback_chain(self) -> list[str]:
+        """
+        Build an ordered list of models to try: configured model first,
+        then preferred models as fallbacks.
+        """
+        chain = [self._model]
+        for m in PREFERRED_MODELS:
+            if m != self._model:
+                chain.append(m)
+        return chain
+
     async def generate(
         self,
         prompt: str,
@@ -52,7 +125,16 @@ class GroqProvider(LLMProvider):
         temperature: float = 0.3,
         max_tokens: int = 768,
     ) -> LLMResponse:
-        models_to_try = [self._model] + [m for m in FALLBACK_MODELS if m != self._model]
+        # Build fallback chain, enriched with live models if available
+        live_models = await self._get_available_chat_models()
+        models_to_try = [self._model]
+        for m in PREFERRED_MODELS:
+            if m not in models_to_try:
+                models_to_try.append(m)
+        for m in live_models:
+            if m not in models_to_try and m not in DEPRECATED_MODELS:
+                models_to_try.append(m)
+
         last_exception = None
 
         for model in models_to_try:
@@ -70,6 +152,7 @@ class GroqProvider(LLMProvider):
                             },
                         )
 
+                        # Rate limited — back off and retry
                         if response.status_code in (429, 503):
                             retry_after = response.headers.get("retry-after")
                             try:
@@ -78,13 +161,15 @@ class GroqProvider(LLMProvider):
                                 delay = 2.0
                             logger.warning(
                                 "Groq rate limited (status %d) on model '%s'. Sleeping %.2fs (attempt %d/3)...",
-                                response.status_code,
-                                model,
-                                delay,
-                                attempt + 1,
+                                response.status_code, model, delay, attempt + 1,
                             )
                             await asyncio.sleep(delay)
                             continue
+
+                        # Model not found — skip to next model immediately
+                        if response.status_code == 404:
+                            logger.warning("Groq model '%s' not found (404) — trying next model", model)
+                            break
 
                         response.raise_for_status()
                         data = response.json()
@@ -92,6 +177,10 @@ class GroqProvider(LLMProvider):
                         raw_content = data["choices"][0]["message"].get("content") or ""
                         choice = _strip_thinking_tags(raw_content)
                         usage = data.get("usage", {})
+
+                        # If we succeeded with a different model than configured, update
+                        if model != self._model:
+                            logger.info("Groq auto-fallback: '%s' -> '%s' succeeded", self._model, model)
 
                         return LLMResponse(
                             text=choice,
@@ -104,6 +193,9 @@ class GroqProvider(LLMProvider):
 
                 except httpx.HTTPStatusError as e:
                     last_exception = e
+                    if e.response.status_code == 404:
+                        logger.warning("Groq model '%s' not found — skipping", model)
+                        break
                     if e.response.status_code in (429, 503) and attempt < 2:
                         continue
                     break
@@ -123,7 +215,7 @@ class GroqProvider(LLMProvider):
         temperature: float = 0.3,
         max_tokens: int = 768,
     ) -> AsyncIterator[str]:
-        models_to_try = [self._model] + [m for m in FALLBACK_MODELS if m != self._model]
+        models_to_try = self._build_fallback_chain()
 
         for model in models_to_try:
             for attempt in range(3):
@@ -149,12 +241,14 @@ class GroqProvider(LLMProvider):
                                     delay = 2.0
                                 logger.warning(
                                     "Groq stream rate limited (status %d) on model '%s'. Sleeping %.2fs...",
-                                    response.status_code,
-                                    model,
-                                    delay,
+                                    response.status_code, model, delay,
                                 )
                                 await asyncio.sleep(delay)
                                 continue
+
+                            if response.status_code == 404:
+                                logger.warning("Groq stream model '%s' not found (404) — trying next", model)
+                                break
 
                             response.raise_for_status()
                             async for line in response.aiter_lines():
@@ -181,4 +275,3 @@ class GroqProvider(LLMProvider):
 
     def get_model_name(self) -> str:
         return self._model
-

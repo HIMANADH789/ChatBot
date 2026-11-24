@@ -18,3 +18,7 @@ chroma_data/
 app/providers/embeddings/model_onnx/
 
 chatbot-secrets.json
+task-definition-*.json
+ecs-task-definition*.json
+deploy.ps1
+deploy-to-aws.ps1

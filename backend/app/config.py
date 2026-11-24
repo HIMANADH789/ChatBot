@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "models/gemini-pro-latest"
 
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "groq/compound"
+    GROQ_MODEL: str = "qwen/qwen3.8-27b"
 
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_MODEL: str = "meta-llama/llama-3.3-70b-instruct"
